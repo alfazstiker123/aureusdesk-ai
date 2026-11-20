@@ -170,22 +170,78 @@ export async function POST(req) {
         pairNote = `ℹ️ Nama pair tidak terbaca jelas; validator memakai profil ${g.id} berdasarkan level harga. Pilih pair manual di Pengaturan bila salah.`;
       }
     }
-    const checked = pairCfg
-      ? verifyRiskTables(text, riskUsd, pairCfg)
-      : { markdown: text, notes: [], tablesChecked: 0 };
     if (!pairCfg) {
       pairNote = '⚠️ Pair tidak terdeteksi / belum didukung validator - angka risiko TIDAK diverifikasi otomatis. Hitung manual atau pilih pair di Pengaturan.';
     }
-    let markdown = checked.markdown;
+    // Rangkaian validator: koreksi risiko -> validator zona & konflik (angka entry/SL/TP/lot tidak diubah)
+    const runChecks = (txt) => {
+      const c = pairCfg ? verifyRiskTables(txt, riskUsd, pairCfg) : { markdown: txt, notes: [], tablesChecked: 0 };
+      let md = c.markdown;
+      let g = { notes: [], flags: { cancel: [], shift: [], fix: [] }, skipped: null };
+      if (strict && pairCfg) {
+        try {
+          g = applyOrderGuard(md, { pair: pairCfg, bias: extractBias(txt) });
+          md = g.markdown;
+        } catch (e) {
+          console.error('[analyze] orderGuard error:', e);
+        }
+      }
+      return { checked: c, markdown: md, guard: g };
+    };
+    let { checked, markdown, guard } = runChecks(text);
+    let finalText = text;
+    let retried = false;
 
-    // Validator zona & konflik order (jarak, arah, KONFLIK BIAS -> DISARANKAN BATALKAN/GESER); angka entry/SL/TP/lot tidak diubah
-    let guard = { notes: [], flags: { cancel: [], shift: [] }, skipped: null };
-    if (strict && pairCfg) {
+    // Ulang SATU kali bila ada entry di luar rentang zona / arah salah (hanya bila waktu cukup)
+    const fixes = guard.flags?.fix || [];
+    if (fixes.length && used && BUDGET_MS - (Date.now() - t0) > 24_000) {
+      retried = true;
       try {
-        guard = applyOrderGuard(markdown, { pair: pairCfg, bias: extractBias(text) });
-        markdown = guard.markdown;
+        const retryPayload = {
+          ...basePayload,
+          contents: [
+            ...basePayload.contents,
+            { role: 'model', parts: [{ text }] },
+            {
+              role: 'user',
+              parts: [
+                {
+                  text:
+                    'KOREKSI WAJIB: validator menemukan entry di luar rentang zona. Tulis ULANG analisa lengkap (format sama persis) dengan memperbaiki HANYA hal berikut; pilih level struktur nyata di dalam rentang, hitung ulang SL, TP, lot, risiko, R:R, dan samakan Bagian 3 dengan 4B:\n- ' +
+                    fixes.join('\n- '),
+                },
+              ],
+            },
+          ],
+        };
+        const rr = await fetch(`${BASE}/${used.model}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+          body: JSON.stringify(retryPayload),
+          cache: 'no-store',
+          signal: AbortSignal.timeout(Math.max(8_000, BUDGET_MS - (Date.now() - t0))),
+        });
+        const rj = await rr.json().catch(() => ({}));
+        log.push(`retry-zona ${used.model}: ${rr.status}`);
+        if (rr.ok) {
+          const t2 = fixInlineTables(
+            (rj?.candidates?.[0]?.content?.parts || [])
+              .filter((p) => !p.thought)
+              .map((p) => p.text || '')
+              .join('')
+              .trim()
+          );
+          if (t2) {
+            const r2 = runChecks(t2);
+            // pakai hasil ulang hanya jika lebih baik (lebih sedikit pelanggaran)
+            if ((r2.guard.flags?.fix || []).length < fixes.length) {
+              ({ checked, markdown, guard } = r2);
+              finalText = t2;
+            }
+          }
+        }
       } catch (e) {
-        console.error('[analyze] orderGuard error:', e);
+        log.push(`retry-zona: ${e?.name === 'TimeoutError' ? 'timeout' : e?.message}`);
       }
     }
 
@@ -210,12 +266,13 @@ export async function POST(req) {
 
     return NextResponse.json({
       markdown,
-      bias: extractBias(text),
+      bias: extractBias(finalText),
       pair: pairCfg ? pairCfg.id : null,
       model: used.model,
       calendarOffline: Boolean(fundamental.offline),
       riskCorrections: checked.notes.length,
       strict,
+      zoneRetry: retried,
       orderGuard: { notes: guard.notes.length, cancel: guard.flags.cancel.length, shift: guard.flags.shift.length, skipped: guard.skipped },
       attempts: log,
     });
