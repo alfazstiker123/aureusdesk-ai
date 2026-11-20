@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Uploader, { guessLabel, TIMEFRAMES } from '@/components/Uploader';
 import HistoryPanel, { biasTone, toneClass, formatWIB } from '@/components/HistoryPanel';
-import MarkdownView from '@/components/MarkdownView';
 import PinGate from '@/components/PinGate';
 import CalendarWidget from '@/components/CalendarWidget';
 import SettingsSheet from '@/components/SettingsSheet';
+import SectionNav from '@/components/SectionNav';
+import { NAV_KEY, NAV_DEFAULT, NAV_MODES } from '@/lib/sections';
 import { compressImage, makeThumbnail, formatKB } from '@/lib/imageCompress';
 import { PAIR_OPTIONS, resolvePair } from '@/lib/pairs';
 import { THEMES, THEME_KEY, THEME_META, resolveTheme } from '@/lib/themes';
@@ -73,6 +74,7 @@ export default function Home() {
   const [pair, setPair] = useState('AUTO');
   const [copyFmt, setCopyFmt] = useState('ASLI');
   const [theme, setTheme] = useState('gold');
+  const [navMode, setNavMode] = useState(NAV_DEFAULT);
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -118,6 +120,8 @@ export default function Home() {
       if (sp && PAIR_OPTIONS.some((o) => o.value === sp)) setPair(sp);
       const th = localStorage.getItem(THEME_KEY);
       if (th && THEMES.some((t) => t.key === th)) setTheme(th);
+      const nm = localStorage.getItem(NAV_KEY);
+      if (nm && NAV_MODES.some((m) => m.key === nm)) setNavMode(nm);
       const cf = localStorage.getItem(LS.copyFmt);
       if (cf && COPY_FORMATS.some((f) => f.key === cf)) setCopyFmt(cf);
     } catch {}
@@ -791,7 +795,7 @@ export default function Home() {
                 ))}
               </div>
 
-              <MarkdownView content={result.markdown} priceDecimals={priceDecimals} />
+              <SectionNav content={result.markdown} priceDecimals={priceDecimals} mode={navMode} />
             </div>
           )}
 
@@ -829,6 +833,11 @@ export default function Home() {
         onTheme={(k) => {
           setTheme(k);
           persist(THEME_KEY, k);
+        }}
+        navMode={navMode}
+        onNavMode={(k) => {
+          setNavMode(k);
+          persist(NAV_KEY, k);
         }}
         apiKey={apiKey}
         onApiKey={(v) => {

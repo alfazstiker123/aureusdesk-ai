@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { THEMES } from '@/lib/themes';
+import { NAV_MODES } from '@/lib/sections';
 
 // Panel Pengaturan: bottom-sheet di HP, dialog di tablet/desktop. Berisi Tema & API Key.
-export default function SettingsSheet({ open, onClose, theme, onTheme, apiKey, onApiKey }) {
+export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey }) {
   const [showKey, setShowKey] = useState(false);
   const panelRef = useRef(null);
 
@@ -63,6 +64,30 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, apiKey, o
                     ))}
                   </span>
                   {t.label}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="mb-5">
+          <h3 className="field-label">Navigasi Cepat Hasil Analisa</h3>
+          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Mode navigasi cepat">
+            {NAV_MODES.map((m) => {
+              const on = navMode === m.key;
+              return (
+                <button
+                  key={m.key}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => onNavMode(m.key)}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition ${
+                    on ? 'border-gold bg-gold/10 ring-1 ring-gold/50' : 'border-line bg-panel2 hover:border-gold/40'
+                  }`}
+                >
+                  <span className="block text-xs font-semibold">{m.label}</span>
+                  <span className="mt-0.5 block text-[10px] leading-snug text-muted">{m.hint}</span>
                 </button>
               );
             })}
