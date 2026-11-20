@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { THEMES } from '@/lib/themes';
 import { NAV_MODES } from '@/lib/sections';
-import { GATEWAY_PRESETS } from '@/lib/modelPresets';
+import { GATEWAY_MODELS, GATEWAY_PRESETS } from '@/lib/modelPresets';
 
 // Panel Pengaturan: bottom-sheet di HP, dialog di tablet/desktop. Berisi Tema & API Key.
 export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, aiModel, onAiModel, apiFetch }) {
@@ -98,11 +98,19 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
               <option value="gemini-flash-latest">gemini-flash-latest</option>
             </optgroup>
             <optgroup label="Gateway (OpenAI-compatible)">
-              {gwModels.map((m) => (
-                <option key={m} value={m}>
-                  {m}
+              {GATEWAY_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                  {m.guess ? ' (id perkiraan)' : ''}
                 </option>
               ))}
+              {(gw?.models || [])
+                .filter((id) => !GATEWAY_PRESETS.includes(id))
+                .map((id) => (
+                  <option key={id} value={id}>
+                    {id}
+                  </option>
+                ))}
             </optgroup>
             <option value="__custom">Model lain (ketik manual)…</option>
           </select>
