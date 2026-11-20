@@ -6,6 +6,7 @@ import HistoryPanel, { biasTone, toneClass, formatWIB } from '@/components/Histo
 import MarkdownView from '@/components/MarkdownView';
 import PinGate from '@/components/PinGate';
 import CalendarWidget from '@/components/CalendarWidget';
+import SettingsSheet from '@/components/SettingsSheet';
 import { compressImage, makeThumbnail, formatKB } from '@/lib/imageCompress';
 import { PAIR_OPTIONS, resolvePair } from '@/lib/pairs';
 import { THEMES, THEME_KEY, THEME_META, resolveTheme } from '@/lib/themes';
@@ -66,13 +67,14 @@ function tfOrder(label) {
 export default function Home() {
   // Pengaturan
   const [apiKey, setApiKey] = useState('');
-  const [showKey, setShowKey] = useState(false);
   const [balance, setBalance] = useState('1000');
   const [risk, setRisk] = useState('2');
   const [session, setSession] = useState('Sesi Asia');
   const [pair, setPair] = useState('AUTO');
   const [copyFmt, setCopyFmt] = useState('ASLI');
   const [theme, setTheme] = useState('gold');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Kunci PIN: 'checking' | 'locked' | 'open'
   const [auth, setAuth] = useState('checking');
@@ -505,9 +507,55 @@ export default function Home() {
             <span className="hidden rounded-md border border-line bg-panel px-2 py-1 font-mono text-[11px] text-muted sm:block">
               gemini-flash-lite-latest
             </span>
-            <button type="button" onClick={lockApp} className="btn btn-ghost px-3 py-1.5 text-xs" title="Kunci aplikasi">
-              🔒 Kunci
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setMenuOpen((o) => !o)}
+                className="btn btn-ghost relative h-10 w-10 !p-0 text-lg leading-none"
+                aria-label="Menu"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+              >
+                ⋮
+                {apiKey.trim() ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-gold" title="API key kustom aktif" /> : null}
+              </button>
+              {menuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} aria-hidden="true" />
+                  <div
+                    role="menu"
+                    className="card absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden p-1.5"
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium hover:bg-panel2"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setSettingsOpen(true);
+                      }}
+                    >
+                      <span aria-hidden="true">⚙️</span>
+                      <span className="flex-1">Pengaturan</span>
+                      <span className="text-[10px] text-muted">Tema · API</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium hover:bg-panel2"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        lockApp();
+                      }}
+                    >
+                      <span aria-hidden="true">🔒</span>
+                      <span className="flex-1">Kunci Aplikasi</span>
+                    </button>
+                    <p className="mt-1 border-t border-line px-3 pb-1.5 pt-2 font-mono text-[10px] text-muted">gemini-flash-lite-latest</p>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
@@ -538,32 +586,8 @@ export default function Home() {
         <section className={`min-w-0 space-y-4 ${tab === 'analisa' ? '' : 'hidden lg:block'} print:block`}>
           {/* PENGATURAN */}
           <div className="card p-4 print:hidden">
-            <h2 className="mb-3 text-sm font-bold">⚙️ Pengaturan Akun & API</h2>
+            <h2 className="mb-3 text-sm font-bold">🎛️ Parameter Analisa</h2>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="sm:col-span-2 lg:col-span-4">
-                <label className="field-label" htmlFor="apikey">
-                  Gemini API Key (opsional — override GEMINI_API_KEY Vercel)
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    id="apikey"
-                    type={showKey ? 'text' : 'password'}
-                    className="input font-mono"
-                    placeholder="Kosongkan untuk memakai key dari server (.env)"
-                    value={apiKey}
-                    autoComplete="off"
-                    onChange={(e) => {
-                      setApiKey(e.target.value);
-                      persist(LS.key, e.target.value.trim());
-                    }}
-                  />
-                  <button type="button" className="btn-ghost px-3" onClick={() => setShowKey((s) => !s)}>
-                    {showKey ? 'Sembunyi' : 'Lihat'}
-                  </button>
-                </div>
-                <p className="mt-1 text-[11px] text-muted">Disimpan hanya di localStorage browser ini.</p>
-              </div>
-
               <div className="sm:col-span-2 lg:col-span-4">
                 <label className="field-label" htmlFor="pair">Instrumen / Pair</label>
                 <select
@@ -591,42 +615,6 @@ export default function Home() {
                     ? 'AI membaca nama pair di pojok kiri atas chart, lalu memakai pengali risiko pair itu.'
                     : 'Rumus risiko dikunci sesuai pair yang dipilih.'}
                 </p>
-              </div>
-
-              <div className="sm:col-span-2 lg:col-span-4">
-                <label className="field-label">Tema Tampilan</label>
-                <div className="grid grid-cols-3 gap-2 sm:grid-cols-6" role="radiogroup" aria-label="Tema tampilan">
-                  {THEMES.map((t) => {
-                    const on = theme === t.key;
-                    return (
-                      <button
-                        key={t.key}
-                        type="button"
-                        role="radio"
-                        aria-checked={on}
-                        title={t.hint || t.label}
-                        onClick={() => {
-                          setTheme(t.key);
-                          persist(THEME_KEY, t.key);
-                        }}
-                        className={`flex flex-col items-center gap-1.5 rounded-xl border px-2 py-2.5 text-[11px] font-semibold transition ${
-                          on ? 'border-gold bg-gold/10 text-ink ring-1 ring-gold/50' : 'border-line bg-panel2 text-muted hover:border-gold/40'
-                        }`}
-                      >
-                        <span className="flex -space-x-1.5">
-                          {t.swatch.map((c, i) => (
-                            <span
-                              key={i}
-                              className="h-4 w-4 rounded-full border border-black/20"
-                              style={{ background: c }}
-                            />
-                          ))}
-                        </span>
-                        {t.label}
-                      </button>
-                    );
-                  })}
-                </div>
               </div>
 
               <div>
@@ -833,6 +821,21 @@ export default function Home() {
           />
         </aside>
       </main>
+
+      <SettingsSheet
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        theme={theme}
+        onTheme={(k) => {
+          setTheme(k);
+          persist(THEME_KEY, k);
+        }}
+        apiKey={apiKey}
+        onApiKey={(v) => {
+          setApiKey(v);
+          persist(LS.key, v.trim());
+        }}
+      />
 
       {toast && (
         <div
