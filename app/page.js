@@ -236,8 +236,11 @@ export default function Home() {
       const ordered = [...images].sort((a, b) => tfOrder(a.label) - tfOrder(b.label));
       const compressed = [];
       const thumbs = [];
+      // Anggaran adaptif: sedikit gambar -> lebih tajam; banyak gambar -> dikecilkan agar muat
+      const perImgBytes = Math.min(1_300_000, Math.floor((MAX_PAYLOAD * 0.75 * 0.97) / ordered.length));
+      const maxWidth = ordered.length <= 3 ? 1920 : ordered.length <= 6 ? 1600 : 1280;
       for (const img of ordered) {
-        const c = await compressImage(img.file);
+        const c = await compressImage(img.file, { maxWidth, maxBytes: perImgBytes });
         compressed.push({ label: img.label, mimeType: c.mimeType, data: c.base64 });
         const t = await makeThumbnail(img.file);
         thumbs.push({ label: img.label, data: t.base64 });
@@ -245,7 +248,7 @@ export default function Home() {
       const total = compressed.reduce((s, c) => s + c.data.length, 0);
       if (total > MAX_PAYLOAD) {
         throw new Error(
-          `Total gambar setelah kompresi ${formatKB(total)} — melebihi batas aman 4MB. Kurangi jumlah screenshot.`
+          `Total gambar setelah kompresi ${formatKB(total)} masih melebihi batas 4MB. Kurangi jumlah screenshot.`
         );
       }
 
