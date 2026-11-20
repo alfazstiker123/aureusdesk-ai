@@ -77,7 +77,7 @@ export default function CalendarWidget({ pair, apiFetch }) {
                 </p>
                 <p className="mt-0.5 text-[11px] text-muted">
                   Forecast {e.forecast || '-'} · Previous {e.previous || '-'}
-                  {e.actual ? <> · <span className="font-semibold text-ink">Actual {e.actual}</span></> : data.source === 'FMP' ? <> · <span className="text-muted">Actual Belum Rilis</span></> : null}
+                  {e.actual ? <> · <span className="font-semibold text-ink">Actual {e.actual}</span></> : data.source !== 'ForexFactory' ? <> · <span className="text-muted">Actual Belum Rilis</span></> : null}
                 </p>
               </div>
             </li>
@@ -87,7 +87,7 @@ export default function CalendarWidget({ pair, apiFetch }) {
 
       {data && !data.offline && (
         <p className="mt-2 text-[10px] text-muted">
-          Sumber: {data.source === 'FMP' ? 'Financial Modeling Prep' : 'ForexFactory (tanpa Actual)'} · {data.stale ? 'data tersimpan (sumber gagal diperbarui) · ' : ''}
+          Sumber: {data.source === 'FMP' ? 'Financial Modeling Prep' : data.source === 'biquote' ? 'biquote.io (gratis, pihak ketiga)' : 'ForexFactory (tanpa Actual)'} · {data.stale ? 'data tersimpan (sumber gagal diperbarui) · ' : ''}
           {data.totalHigh > 5 ? `menampilkan 5 dari ${data.totalHigh} High-Impact · ` : ''}
           No-Trade Zone ±15 menit dari rilis.
         </p>
