@@ -3,7 +3,9 @@
 import { useRef, useState } from 'react';
 
 export const TIMEFRAMES = ['W1', 'D1', 'H4', 'H1', 'M15', 'M5', 'M1', 'Tab Trade MT4', 'Tab Riwayat MT4', 'Lainnya'];
-const ACCEPT = ['image/jpeg', 'image/png', 'image/webp'];
+// Terima semua gambar (termasuk HEIC dari galeri iPhone); browser yang tidak bisa
+// membacanya akan menampilkan pesan error saat kompresi.
+const isImage = (f) => (f.type || '').startsWith('image/') || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name || '');
 
 export function guessLabel(name = '') {
   const n = name.toLowerCase();
@@ -24,7 +26,7 @@ export default function Uploader({ images, onAdd, onRemove, onLabel, onClear, di
   const [drag, setDrag] = useState(false);
 
   const handleFiles = (fileList) => {
-    const files = Array.from(fileList || []).filter((f) => ACCEPT.includes(f.type));
+    const files = Array.from(fileList || []).filter(isImage);
     if (files.length) onAdd(files);
   };
 
@@ -60,7 +62,7 @@ export default function Uploader({ images, onAdd, onRemove, onLabel, onClear, di
           ref={inputRef}
           type="file"
           multiple
-          accept="image/jpeg,image/png,image/webp"
+          accept="image/*"
           className="hidden"
           onChange={(e) => {
             handleFiles(e.target.files);
@@ -87,7 +89,7 @@ export default function Uploader({ images, onAdd, onRemove, onLabel, onClear, di
                   aria-label="Hapus gambar"
                   disabled={disabled}
                   onClick={() => onRemove(img.id)}
-                  className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-night/80 text-xs text-ink hover:bg-down"
+                  className="touch-x absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-full bg-night/80 text-xs text-ink hover:bg-down"
                 >
                   ✕
                 </button>

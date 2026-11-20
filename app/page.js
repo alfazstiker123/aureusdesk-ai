@@ -324,15 +324,16 @@ export default function Home() {
   return (
     <div className="min-h-screen">
       {/* HEADER */}
-      <header className="sticky top-0 z-30 border-b border-line bg-night/90 backdrop-blur print:hidden">
+      <header className="app-header sticky top-0 z-30 border-b border-line bg-night/90 backdrop-blur print:hidden">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gold text-lg font-black text-night">Au</div>
-            <div>
+          <div className="flex min-w-0 items-center gap-2.5">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/icon-192.png" alt="AureusDesk AI" width="36" height="36" className="h-9 w-9 flex-none rounded-lg" />
+            <div className="min-w-0">
               <h1 className="text-base font-extrabold leading-tight tracking-tight">
                 AureusDesk <span className="text-gold">AI</span>
               </h1>
-              <p className="text-[11px] text-muted">XAU/USD Multi-Timeframe · Gemini Flash-Lite + Live Search</p>
+              <p className="truncate text-[11px] text-muted">XAU/USD Multi-Timeframe · Gemini Flash-Lite + Live Search</p>
             </div>
           </div>
           <span className="hidden rounded-md border border-line bg-panel px-2 py-1 font-mono text-[11px] text-muted sm:block">
@@ -524,7 +525,7 @@ export default function Home() {
                     {Number(result.meta?.balance || 0).toLocaleString('en-US')} · Risiko {result.meta?.risk}%
                   </p>
                 </div>
-                <div className="flex gap-2 print:hidden">
+                <div className="flex flex-wrap gap-2 print:hidden">
                   <button type="button" onClick={copyResult} className="btn-ghost text-xs">📋 Copy Hasil Analisa</button>
                   <button type="button" onClick={() => window.print()} className="btn-ghost text-xs">🖨️ Print / Save PDF</button>
                 </div>
@@ -573,7 +574,10 @@ export default function Home() {
       </main>
 
       {toast && (
-        <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-line bg-panel2 px-4 py-2.5 text-sm shadow-2xl print:hidden">
+        <div
+          style={{ bottom: 'max(1.25rem, calc(env(safe-area-inset-bottom) + 0.75rem))' }}
+          className="fixed left-1/2 z-50 w-max max-w-[92vw] -translate-x-1/2 rounded-lg border border-line bg-panel2 px-4 py-2.5 text-center text-sm shadow-2xl print:hidden"
+        >
           {toast}
         </div>
       )}
