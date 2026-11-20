@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSupabase, TABLE, BUCKET } from '@/lib/supabase';
 import { GEMINI_MODEL } from '@/lib/prompt';
 import { requirePin } from '@/lib/auth';
-import { getCalendar } from '@/lib/calendar';
+import { getCalendar, calendarDebug } from '@/lib/calendar';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,7 +35,7 @@ export async function GET(req) {
   const { searchParams } = new URL(req.url);
   if (searchParams.get('calendar') === '1') {
     const c = await getCalendar();
-    out.calendar = { events: c.events.length, fetchedAt: c.fetchedAt, stale: c.stale, error: c.error };
+    out.calendar = { source: c.source, events: c.events.length, withActual: c.events.filter((e) => e.actual).length, fetchedAt: c.fetchedAt, stale: c.stale, error: c.error, fmpError: c.fmpError, fmp: calendarDebug() };
   }
   if (searchParams.get('gemini') === '1') {
     const denied = requirePin(req); // uji Gemini memakai kuota -> wajib PIN

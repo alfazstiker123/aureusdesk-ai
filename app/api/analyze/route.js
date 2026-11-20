@@ -195,9 +195,9 @@ export async function POST(req) {
       notices.push(`ℹ️ Kuota model utama habis, dijalankan otomatis dengan \`${used.model}\`.`);
     }
     if (fundamental.offline) {
-      notices.push('📅 Jadwal berita (ForexFactory) sedang offline — Bagian 1 tanpa jadwal. Cek kalender ekonomi secara manual.');
+      notices.push('📅 Jadwal berita sedang offline — Bagian 1 tanpa jadwal. Cek kalender ekonomi secara manual.');
     } else if (fundamental.stale) {
-      notices.push('📅 Kalender memakai data tersimpan (feed gagal diperbarui). Verifikasi jam rilis terbaru.');
+      notices.push('📅 Kalender memakai data tersimpan (sumber gagal diperbarui). Verifikasi jam rilis terbaru.');
     }
     guard.notes.forEach((n) => notices.push(n));
     if (notices.length) {
@@ -205,7 +205,7 @@ export async function POST(req) {
     }
 
     if (!fundamental.offline) {
-      markdown += `\n\n---\n\n_Sumber fundamental: kalender ekonomi ForexFactory (faireconomy feed)${fundamental.newsUsed ? ' + headline Finnhub' : ''}, jam dikonversi ke WIB._`;
+      markdown += `\n\n---\n\n_Sumber fundamental: kalender ekonomi ${fundamental.source === 'FMP' ? 'Financial Modeling Prep' : 'ForexFactory (faireconomy feed, tanpa Actual)'}${fundamental.newsUsed ? ' + headline Finnhub' : ''}, jam dikonversi ke WIB._`;
     }
 
     return NextResponse.json({
