@@ -272,6 +272,13 @@ a:focus-visible {
     overflow-wrap: normal;
     word-break: normal;
   }
+  .md td > .cv {
+    display: block;
+    flex: 1 1 0;
+    min-width: 0;
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
   .md td:last-child {
     border-bottom: 0;
   }

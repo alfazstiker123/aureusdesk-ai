@@ -31,7 +31,15 @@ const components = {
     const headers = useContext(HeadersCtx);
     let i = 0;
     const mapped = Children.map(children, (c) =>
-      isValidElement(c) ? cloneElement(c, { 'data-label': headers[i++] || '' }) : c
+      isValidElement(c)
+        ? cloneElement(
+            c,
+            { 'data-label': headers[i++] || '' },
+            // Bungkus isi sel jadi satu blok agar teks campuran (biasa + miring + tebal)
+            // tidak terpecah menjadi kolom-kolom terpisah pada tampilan kartu HP.
+            <span className="cv">{c.props.children}</span>
+          )
+        : c
     );
     return <tr {...props}>{mapped}</tr>;
   },
