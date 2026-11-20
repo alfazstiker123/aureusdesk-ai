@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabase, TABLE, BUCKET } from '@/lib/supabase';
+import { requirePin } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -7,7 +8,9 @@ export const dynamic = 'force-dynamic';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // GET /api/history/:id -> detail lengkap (termasuk markdown)
-export async function GET(_req, { params }) {
+export async function GET(req, { params }) {
+  const denied = requirePin(req);
+  if (denied) return denied;
   try {
     const { id } = await params;
     if (!UUID_RE.test(id)) return NextResponse.json({ error: 'ID tidak valid.' }, { status: 400 });
@@ -22,7 +25,9 @@ export async function GET(_req, { params }) {
 }
 
 // DELETE /api/history/:id -> hapus baris + thumbnail di Storage
-export async function DELETE(_req, { params }) {
+export async function DELETE(req, { params }) {
+  const denied = requirePin(req);
+  if (denied) return denied;
   try {
     const { id } = await params;
     if (!UUID_RE.test(id)) return NextResponse.json({ error: 'ID tidak valid.' }, { status: 400 });

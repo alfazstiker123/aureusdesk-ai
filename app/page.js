@@ -4,7 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Uploader, { guessLabel, TIMEFRAMES } from '@/components/Uploader';
 import HistoryPanel, { biasTone, toneClass, formatWIB } from '@/components/HistoryPanel';
 import MarkdownView from '@/components/MarkdownView';
+import PinGate from '@/components/PinGate';
 import { compressImage, makeThumbnail, formatKB } from '@/lib/imageCompress';
+import { PAIR_OPTIONS } from '@/lib/pairs';
 
 const SESSIONS = ['Sesi Asia', 'Sesi Eropa', 'Sesi New York'];
 const MAX_IMAGES = 12;
@@ -20,6 +22,8 @@ const LS = {
   key: 'aureus_gemini_key',
   balance: 'aureus_balance',
   risk: 'aureus_risk',
+  pin: 'aureus_pin',
+  pair: 'aureus_pair',
 };
 
 function detectSession() {
@@ -54,6 +58,13 @@ export default function Home() {
   const [balance, setBalance] = useState('1000');
   const [risk, setRisk] = useState('2');
   const [session, setSession] = useState('Sesi Asia');
+  const [pair, setPair] = useState('AUTO');
+
+  // Kunci PIN: 'checking' | 'locked' | 'open'
+  const [auth, setAuth] = useState('checking');
+  const [authError, setAuthError] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+  const pinRef = useRef('');
 
   // Upload & proses
   const [images, setImages] = useState([]);
@@ -87,9 +98,11 @@ export default function Home() {
       const r = localStorage.getItem(LS.risk);
       if (b) setBalance(b);
       if (r) setRisk(r);
+      const sp = localStorage.getItem(LS.pair);
+      if (sp && PAIR_OPTIONS.some((o) => o.value === sp)) setPair(sp);
     } catch {}
     setSession(detectSession());
-    loadHistory();
+    checkStoredPin();
     return () => imagesRef.current.forEach((i) => URL.revokeObjectURL(i.preview));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -100,6 +113,11 @@ export default function Home() {
       else localStorage.removeItem(k);
     } catch {}
   };
+
+  useEffect(() => {
+    if (auth === 'open') loadHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth]);
 
   // ---- timer loading
   useEffect(() => {
@@ -114,12 +132,89 @@ export default function Home() {
     setTimeout(() => setToast(''), 3200);
   }, []);
 
+  // ---- PIN
+  async function verifyPin(pin) {
+    const res = await fetch('/api/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin }),
+    });
+    const data = await safeJson(res);
+    return { ok: res.ok, error: data.error };
+  }
+
+  async function checkStoredPin() {
+    let stored = '';
+    try {
+      stored = localStorage.getItem(LS.pin) || '';
+    } catch {}
+    if (!stored) {
+      setAuth('locked');
+      return;
+    }
+    try {
+      const r = await verifyPin(stored);
+      if (r.ok) {
+        pinRef.current = stored;
+        setAuth('open');
+      } else {
+        persist(LS.pin, '');
+        setAuth('locked');
+      }
+    } catch {
+      setAuth('locked');
+      setAuthError('Tidak bisa menghubungi server. Cek koneksi lalu masukkan PIN.');
+    }
+  }
+
+  async function submitPin(pin) {
+    setAuthBusy(true);
+    setAuthError('');
+    try {
+      const r = await verifyPin(pin);
+      if (!r.ok) {
+        setAuthError(r.error || 'PIN salah.');
+        return;
+      }
+      pinRef.current = pin;
+      persist(LS.pin, pin);
+      setAuth('open');
+    } catch {
+      setAuthError('Tidak bisa menghubungi server.');
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  function lockApp() {
+    pinRef.current = '';
+    persist(LS.pin, '');
+    setHistory([]);
+    setResult(null);
+    setActiveId(null);
+    setAuthError('');
+    setAuth('locked');
+  }
+
+  // fetch ke API internal dengan PIN; 401 -> kunci ulang
+  async function apiFetch(url, opts = {}) {
+    const res = await fetch(url, {
+      ...opts,
+      headers: { ...(opts.headers || {}), 'x-app-pin': pinRef.current },
+    });
+    if (res.status === 401) {
+      lockApp();
+      setAuthError('PIN tidak valid lagi. Masukkan ulang.');
+    }
+    return res;
+  }
+
   // ---- riwayat
   async function loadHistory() {
     setHistLoading(true);
     setHistError('');
     try {
-      const res = await fetch('/api/history', { cache: 'no-store' });
+      const res = await apiFetch('/api/history', { cache: 'no-store' });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error);
       setHistory(data.items || []);
@@ -133,7 +228,7 @@ export default function Home() {
   async function openHistory(item) {
     setBusyId(item.id);
     try {
-      const res = await fetch(`/api/history/${item.id}`, { cache: 'no-store' });
+      const res = await apiFetch(`/api/history/${item.id}`, { cache: 'no-store' });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error);
       const it = data.item;
@@ -145,6 +240,7 @@ export default function Home() {
           session: it.session_label,
           balance: it.account_balance,
           risk: it.risk_percent,
+          pair: it.pair,
         },
         thumbnails: it.thumbnails || [],
       });
@@ -163,7 +259,7 @@ export default function Home() {
     if (!window.confirm(`Hapus analisa ${formatWIB(item.created_at)}?`)) return;
     setBusyId(item.id);
     try {
-      const res = await fetch(`/api/history/${item.id}`, { method: 'DELETE' });
+      const res = await apiFetch(`/api/history/${item.id}`, { method: 'DELETE' });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error);
       setHistory((h) => h.filter((x) => x.id !== item.id));
@@ -254,13 +350,13 @@ export default function Home() {
 
       // 2) Gemini + Google Search
       setStage('search');
-      const res = await fetch('/api/analyze', {
+      const res = await apiFetch('/api/analyze', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(apiKey.trim() ? { 'x-gemini-key': apiKey.trim() } : {}),
         },
-        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session }),
+        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair }),
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || 'Gagal menganalisa.');
@@ -269,19 +365,20 @@ export default function Home() {
       setResult({
         markdown: data.markdown,
         bias: data.bias,
-        meta: { created_at: createdAt, session, balance: Number(balance), risk: Number(risk) },
+        meta: { created_at: createdAt, session, balance: Number(balance), risk: Number(risk), pair: data.pair || (pair !== 'AUTO' ? pair : null) },
         thumbnails: [],
       });
       setTab('analisa');
 
       // 3) Simpan ke Supabase
       setStage('save');
-      const saveRes = await fetch('/api/history', {
+      const saveRes = await apiFetch('/api/history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           markdown: data.markdown,
           bias: data.bias,
+          pair: data.pair || (pair !== 'AUTO' ? pair : 'XAUUSD'),
           balance: Number(balance),
           risk: Number(risk),
           session,
@@ -321,6 +418,13 @@ export default function Home() {
     showToast('📋 Hasil analisa disalin.');
   }
 
+  if (auth !== 'open') {
+    if (auth === 'checking') {
+      return <div className="flex min-h-screen items-center justify-center text-xs text-muted">Memeriksa akses...</div>;
+    }
+    return <PinGate onSubmit={submitPin} error={authError} busy={authBusy} />;
+  }
+
   const stageIndex = STAGES.findIndex((s) => s.key === stage);
   const tone = biasTone(result?.bias || '');
 
@@ -336,12 +440,17 @@ export default function Home() {
               <h1 className="text-base font-extrabold leading-tight tracking-tight">
                 AureusDesk <span className="text-gold">AI</span>
               </h1>
-              <p className="truncate text-[11px] text-muted">XAU/USD Multi-Timeframe · Gemini Flash-Lite + Live Search</p>
+              <p className="truncate text-[11px] text-muted">Multi-Pair · Multi-Timeframe · Gemini + Live Search</p>
             </div>
           </div>
-          <span className="hidden rounded-md border border-line bg-panel px-2 py-1 font-mono text-[11px] text-muted sm:block">
-            gemini-flash-lite-latest
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="hidden rounded-md border border-line bg-panel px-2 py-1 font-mono text-[11px] text-muted sm:block">
+              gemini-flash-lite-latest
+            </span>
+            <button type="button" onClick={lockApp} className="btn btn-ghost px-3 py-1.5 text-xs" title="Kunci aplikasi">
+              🔒 Kunci
+            </button>
+          </div>
         </div>
 
         {/* Tab mobile */}
@@ -393,6 +502,35 @@ export default function Home() {
                   </button>
                 </div>
                 <p className="mt-1 text-[11px] text-muted">Disimpan hanya di localStorage browser ini.</p>
+              </div>
+
+              <div className="sm:col-span-2 lg:col-span-4">
+                <label className="field-label" htmlFor="pair">Instrumen / Pair</label>
+                <select
+                  id="pair"
+                  className="input"
+                  value={pair}
+                  onChange={(e) => {
+                    setPair(e.target.value);
+                    persist(LS.pair, e.target.value);
+                  }}
+                >
+                  {PAIR_OPTIONS.filter((o) => !o.group).map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                  {[...new Set(PAIR_OPTIONS.filter((o) => o.group).map((o) => o.group))].map((g) => (
+                    <optgroup key={g} label={g}>
+                      {PAIR_OPTIONS.filter((o) => o.group === g).map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-muted">
+                  {pair === 'AUTO'
+                    ? 'AI membaca nama pair di pojok kiri atas chart, lalu memakai pengali risiko pair itu.'
+                    : 'Rumus risiko dikunci sesuai pair yang dipilih.'}
+                </p>
               </div>
 
               <div>
@@ -519,7 +657,7 @@ export default function Home() {
             <div ref={resultRef} className="card print-area min-w-0 scroll-mt-28 p-4 sm:p-6">
               <div className="mb-4 flex flex-col gap-3 border-b border-line pb-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <p className="text-[11px] uppercase tracking-wider text-muted">Hasil Analisa XAU/USD</p>
+                  <p className="text-[11px] uppercase tracking-wider text-muted">Hasil Analisa {result.meta?.pair || ''}</p>
                   <span className={`mt-1 inline-block rounded-md border px-2.5 py-1 text-sm font-extrabold ${toneClass[tone]}`}>
                     {result.bias}
                   </span>

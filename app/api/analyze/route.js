@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
-import { GEMINI_MODEL, SYSTEM_INSTRUCTION, buildUserPrompt, extractBias } from '@/lib/prompt';
+import { GEMINI_MODEL, buildSystemInstruction, buildUserPrompt, extractBias } from '@/lib/prompt';
+import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice } from '@/lib/pairs';
+import { requirePin } from '@/lib/auth';
 import { verifyRiskTables } from '@/lib/riskCheck';
 
 export const runtime = 'nodejs';
@@ -41,6 +43,8 @@ function buildPayload(base, { model, search }) {
 }
 
 export async function POST(req) {
+  const denied = requirePin(req);
+  if (denied) return denied;
   const t0 = Date.now();
   try {
     const body = await req.json().catch(() => null);
@@ -49,6 +53,8 @@ export async function POST(req) {
     }
 
     const { images = [], balance = 0, risk = 2, session = '' } = body;
+    const pairChoice = PAIR_ID_OK(body.pair) ? body.pair : 'AUTO';
+    const fixedPair = pairChoice === 'AUTO' ? null : PAIRS[pairChoice];
 
     // Prioritas: key dari UI (header) -> env Vercel
     const apiKey = (req.headers.get('x-gemini-key') || '').trim() || process.env.GEMINI_API_KEY;
@@ -77,14 +83,14 @@ export async function POST(req) {
     const labels = images.map((img) => img.label || 'Chart');
     const riskUsd = ((Number(balance) || 0) * (Number(risk) || 0)) / 100;
 
-    const parts = [{ text: buildUserPrompt({ balance, risk, session, labels }) }];
+    const parts = [{ text: buildUserPrompt({ balance, risk, session, labels, pair: fixedPair }) }];
     images.forEach((img, i) => {
       parts.push({ text: `Gambar ${i + 1} — ${labels[i]}` });
       parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
     });
 
     const basePayload = {
-      systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+      systemInstruction: { parts: [{ text: buildSystemInstruction(fixedPair) }] },
       contents: [{ role: 'user', parts }],
       generationConfig: {
         temperature: 0.3,
@@ -165,10 +171,27 @@ export async function POST(req) {
     const queries = gm.webSearchQueries || [];
 
     // Verifikasi rumus risiko: Risiko = Lot x Jarak SL x 100 (koreksi angka karangan AI)
-    const checked = verifyRiskTables(text, riskUsd);
+    // Pair: pilihan user, atau hasil deteksi AI (baris **PAIR:**), cadangan tebakan dari harga terakhir
+    let pairCfg = fixedPair || extractPair(text);
+    let pairNote = '';
+    if (!pairCfg) {
+      const m = text.match(/harga\s+terakhir[^0-9]{0,30}([\d.,]+)/i);
+      const g = m ? guessPairByPrice(parseFloat(m[1].replace(/,/g, ''))) : null;
+      if (g) {
+        pairCfg = g;
+        pairNote = `ℹ️ Nama pair tidak terbaca jelas; validator memakai profil ${g.id} berdasarkan level harga. Pilih pair manual di Pengaturan bila salah.`;
+      }
+    }
+    const checked = pairCfg
+      ? verifyRiskTables(text, riskUsd, pairCfg)
+      : { markdown: text, notes: [], tablesChecked: 0 };
+    if (!pairCfg) {
+      pairNote = '⚠️ Pair tidak terdeteksi / belum didukung validator - angka risiko TIDAK diverifikasi otomatis. Hitung manual atau pilih pair di Pengaturan.';
+    }
     let markdown = checked.markdown;
 
     const notices = [];
+    if (pairNote) notices.push(pairNote);
     if (used.model !== GEMINI_MODEL) {
       notices.push(`ℹ️ Kuota model utama habis, dijalankan otomatis dengan \`${used.model}\`.`);
     }
@@ -191,6 +214,7 @@ export async function POST(req) {
     return NextResponse.json({
       markdown,
       bias: extractBias(text),
+      pair: pairCfg ? pairCfg.id : null,
       sources,
       model: used.model,
       searchUsed: used.search,

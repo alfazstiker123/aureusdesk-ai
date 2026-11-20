@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabase, TABLE, BUCKET } from '@/lib/supabase';
 import { GEMINI_MODEL } from '@/lib/prompt';
+import { requirePin } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +31,10 @@ export async function GET(req) {
   }
 
   const { searchParams } = new URL(req.url);
+  if (searchParams.get('gemini') === '1') {
+    const denied = requirePin(req); // uji Gemini memakai kuota -> wajib PIN
+    if (denied) return denied;
+  }
   if (searchParams.get('gemini') === '1' && process.env.GEMINI_API_KEY) {
     // ?model=... untuk menguji model fallback (hanya model yang diizinkan)
     const allowed = [GEMINI_MODEL, 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-flash-lite-latest'];

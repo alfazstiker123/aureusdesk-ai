@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabase, TABLE, BUCKET } from '@/lib/supabase';
+import { requirePin } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -8,7 +9,9 @@ const LIST_COLUMNS =
   'id, created_at, pair, account_balance, risk_percent, session_label, summary_bias, thumbnails';
 
 // GET /api/history -> daftar riwayat (tanpa markdown agar ringan)
-export async function GET() {
+export async function GET(req) {
+  const denied = requirePin(req);
+  if (denied) return denied;
   try {
     const sb = getSupabase();
     const { data, error } = await sb
@@ -30,6 +33,8 @@ function slug(s = '') {
 
 // POST /api/history -> simpan analisa + upload thumbnail ke Storage
 export async function POST(req) {
+  const denied = requirePin(req);
+  if (denied) return denied;
   try {
     const body = await req.json().catch(() => null);
     if (!body?.markdown) {
@@ -59,7 +64,7 @@ export async function POST(req) {
 
     const row = {
       id,
-      pair: 'XAUUSD',
+      pair: /^[A-Z0-9]{3,12}$/.test(String(body.pair || '')) ? body.pair : 'XAUUSD',
       account_balance: Number(body.balance) || 0,
       risk_percent: Number(body.risk) || 0,
       session_label: body.session || null,

@@ -1,9 +1,9 @@
 import './globals.css';
 
 export const metadata = {
-  title: 'AureusDesk AI — Analisa XAU/USD Multi-Timeframe',
+  title: 'AureusDesk AI — Analisa Multi-Pair & Multi-Timeframe',
   description:
-    'Analisa trading emas (XAU/USD) multi-timeframe berbasis AI Google Gemini dengan jurnal riwayat Supabase.',
+    'Analisa trading multi-pair (emas, forex, crypto) multi-timeframe berbasis AI Google Gemini dengan jurnal riwayat Supabase.',
   applicationName: 'AureusDesk AI',
   // Cegah iOS mengubah harga (mis. 2650.35) menjadi tautan telepon
   formatDetection: { telephone: false, email: false, address: false },

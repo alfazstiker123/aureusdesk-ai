@@ -2,7 +2,7 @@ export default function manifest() {
   return {
     name: 'AureusDesk AI',
     short_name: 'AureusDesk',
-    description: 'Analisa XAU/USD multi-timeframe berbasis AI',
+    description: 'Analisa multi-pair & multi-timeframe berbasis AI',
     start_url: '/',
     display: 'standalone',
     background_color: '#0B0E11',
