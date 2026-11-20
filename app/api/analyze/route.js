@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { GEMINI_MODEL, buildSystemInstruction, buildUserPrompt, extractBias } from '@/lib/prompt';
 import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice } from '@/lib/pairs';
 import { requirePin } from '@/lib/auth';
+import { buildFundamentalBlock } from '@/lib/calendar';
 import { verifyRiskTables } from '@/lib/riskCheck';
 
 export const runtime = 'nodejs';
@@ -13,16 +14,10 @@ const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_IMAGES = 12;
 const BUDGET_MS = 52_000; // total waktu semua percobaan (di bawah maxDuration)
 
-// Urutan percobaan: model utama + Google Search -> model dengan kuota search lebih stabil
-// -> baru jatuh ke mode tanpa Google Search.
+// Urutan percobaan (tanpa Google Search): model utama -> model cadangan.
 // (gemini-2.5-flash & gemini-2.0-flash sudah dihentikan Google -> 404, jadi tidak dipakai.)
 const FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-3.8-flash'];
-const ATTEMPTS = [
-  { model: GEMINI_MODEL, search: true },
-  ...FALLBACK_MODELS.map((model) => ({ model, search: true })),
-  { model: GEMINI_MODEL, search: false },
-  { model: FALLBACK_MODELS[0], search: false },
-];
+const ATTEMPTS = [{ model: GEMINI_MODEL }, ...FALLBACK_MODELS.map((model) => ({ model }))];
 
 // Error yang layak dicoba ulang dengan model/mode lain (kuota, overload, model tidak ada, tool search ditolak)
 function shouldFallback(status, json) {
@@ -34,12 +29,6 @@ function shouldFallback(status, json) {
     st === 'UNAVAILABLE' ||
     /quota|rate.?limit|exhausted|overload|unavailable|google.?search|grounding|tool/.test(msg)
   );
-}
-
-function buildPayload(base, { model, search }) {
-  const payload = JSON.parse(JSON.stringify(base));
-  if (search) payload.tools = [{ googleSearch: {} }];
-  return payload;
 }
 
 export async function POST(req) {
@@ -83,7 +72,13 @@ export async function POST(req) {
     const labels = images.map((img) => img.label || 'Chart');
     const riskUsd = ((Number(balance) || 0) * (Number(risk) || 0)) / 100;
 
-    const parts = [{ text: buildUserPrompt({ balance, risk, session, labels, pair: fixedPair }) }];
+    // Kalender ekonomi live (ForexFactory) + Finnhub opsional; gagal -> tetap lanjut dengan catatan offline
+    const fundamental = await buildFundamentalBlock(fixedPair ? fixedPair.id : null).catch((e) => ({
+      text: `=== DATA FUNDAMENTAL LIVE ===\nSTATUS KALENDER: OFFLINE (${e?.message || 'error'}). Jadwal berita TIDAK tersedia.\n=== AKHIR DATA FUNDAMENTAL ===`,
+      offline: true,
+    }));
+
+    const parts = [{ text: buildUserPrompt({ balance, risk, session, labels, pair: fixedPair, fundamental: fundamental.text }) }];
     images.forEach((img, i) => {
       parts.push({ text: `Gambar ${i + 1} — ${labels[i]}` });
       parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
@@ -114,12 +109,12 @@ export async function POST(req) {
         const r = await fetch(`${BASE}/${attempt.model}:generateContent`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-          body: JSON.stringify(buildPayload(basePayload, attempt)),
+          body: JSON.stringify(basePayload),
           cache: 'no-store',
           signal: AbortSignal.timeout(Math.max(8_000, remaining)),
         });
         const j = await r.json().catch(() => ({}));
-        log.push(`${attempt.model}${attempt.search ? '+search' : ''}: ${r.status}`);
+        log.push(`${attempt.model}: ${r.status}`);
         res = r;
         json = j;
         if (r.ok) {
@@ -128,7 +123,7 @@ export async function POST(req) {
         }
         if (!shouldFallback(r.status, j)) break; // mis. API key salah -> tidak ada gunanya mencoba lagi
       } catch (e) {
-        log.push(`${attempt.model}${attempt.search ? '+search' : ''}: ${e?.name === 'TimeoutError' ? 'timeout' : e?.message}`);
+        log.push(`${attempt.model}: ${e?.name === 'TimeoutError' ? 'timeout' : e?.message}`);
         res = null;
       }
     }
@@ -158,18 +153,6 @@ export async function POST(req) {
       return NextResponse.json({ error: `AI tidak menghasilkan analisa (${reason}).`, attempts: log }, { status: 502 });
     }
 
-    // Sumber dari Google Search Grounding
-    const gm = candidate?.groundingMetadata || {};
-    const seen = new Set();
-    const sources = [];
-    for (const ch of gm.groundingChunks || []) {
-      const uri = ch?.web?.uri;
-      if (!uri || seen.has(uri)) continue;
-      seen.add(uri);
-      sources.push({ title: ch.web.title || uri, uri });
-    }
-    const queries = gm.webSearchQueries || [];
-
     // Verifikasi rumus risiko: Risiko = Lot x Jarak SL x 100 (koreksi angka karangan AI)
     // Pair: pilihan user, atau hasil deteksi AI (baris **PAIR:**), cadangan tebakan dari harga terakhir
     let pairCfg = fixedPair || extractPair(text);
@@ -195,29 +178,25 @@ export async function POST(req) {
     if (used.model !== GEMINI_MODEL) {
       notices.push(`ℹ️ Kuota model utama habis, dijalankan otomatis dengan \`${used.model}\`.`);
     }
-    if (!used.search) {
-      notices.push('⚠️ **Kuota Google Search habis** — analisa fundamental disusun TANPA berita live. Verifikasi kalender ekonomi secara manual.');
+    if (fundamental.offline) {
+      notices.push('📅 Jadwal berita (ForexFactory) sedang offline — Bagian 1 tanpa jadwal. Cek kalender ekonomi secara manual.');
+    } else if (fundamental.stale) {
+      notices.push('📅 Kalender memakai data tersimpan (feed gagal diperbarui). Verifikasi jam rilis terbaru.');
     }
     if (notices.length) {
       markdown = notices.map((n) => `> ${n}`).join('\n>\n') + '\n\n' + markdown;
     }
 
-    if (sources.length) {
-      markdown +=
-        '\n\n---\n\n#### 🔎 Sumber Berita (Google Search Live)\n' +
-        sources.map((s, i) => `${i + 1}. [${s.title}](${s.uri})`).join('\n');
-    }
-    if (queries.length) {
-      markdown += `\n\n_Kata kunci pencarian: ${queries.join(' · ')}_`;
+    if (!fundamental.offline) {
+      markdown += `\n\n---\n\n_Sumber fundamental: kalender ekonomi ForexFactory (faireconomy feed)${fundamental.newsUsed ? ' + headline Finnhub' : ''}, jam dikonversi ke WIB._`;
     }
 
     return NextResponse.json({
       markdown,
       bias: extractBias(text),
       pair: pairCfg ? pairCfg.id : null,
-      sources,
       model: used.model,
-      searchUsed: used.search,
+      calendarOffline: Boolean(fundamental.offline),
       riskCorrections: checked.notes.length,
       attempts: log,
     });

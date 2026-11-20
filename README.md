@@ -1,6 +1,6 @@
 # AureusDesk AI 🟡
 
-Analisa Trading Emas (XAU/USD) Multi-Timeframe berbasis AI — **Next.js 14 (App Router) + Tailwind CSS + Supabase + Google Gemini `gemini-flash-lite-latest`** dengan Google Search Grounding (berita The Fed, DXY, yields, kalender ekonomi live).
+Analisa Trading Emas (XAU/USD) Multi-Timeframe berbasis AI — **Next.js 14 (App Router) + Tailwind CSS + Supabase + Google Gemini `gemini-flash-lite-latest`** dengan **Kalender Ekonomi Live ForexFactory** (jam WIB, Actual/Forecast/Previous, No-Trade Zone) disuntik server ke prompt — tanpa Google Search Grounding (bebas limit 429 search).
 
 ---
 
@@ -10,7 +10,7 @@ Analisa Trading Emas (XAU/USD) Multi-Timeframe berbasis AI — **Next.js 14 (App
 aureusdesk-ai/
 ├── app/
 │   ├── api/
-│   │   ├── analyze/route.js        # POST: kirim gambar -> Gemini + Google Search
+│   │   ├── analyze/route.js        # POST: kirim gambar -> Gemini + kalender live
 │   │   └── history/
 │   │       ├── route.js            # GET daftar riwayat · POST simpan (+ upload thumbnail)
 │   │       └── [id]/route.js       # GET detail · DELETE hapus (+ hapus thumbnail)
@@ -37,7 +37,7 @@ aureusdesk-ai/
 ## 2. Alur Kerja Aplikasi
 
 1. **Mengompresi chart...** — semua screenshot di-resize ke maks 1280px (JPEG) di browser + thumbnail 360px. Total dicek < 4MB (limit Vercel 4.5MB).
-2. **Mencari berita fundamental The Fed...** — `/api/analyze` memanggil Gemini dengan `tools: [{ googleSearch: {} }]` dan semua gambar sebagai `inlineData` dalam satu request. Gambar otomatis diurutkan Top-Down (W1 → M1 → Tab Trade).
+2. **Mencari berita fundamental The Fed...** — `/api/analyze` mengambil kalender ForexFactory (cache 45 menit) lalu memanggil Gemini (tanpa tool search) dengan data itu dan semua gambar sebagai `inlineData` dalam satu request. Gambar otomatis diurutkan Top-Down (W1 → M1 → Tab Trade).
 3. **Menyusun setup teknikal & menyimpan ke Supabase...** — `/api/history` meng-upload thumbnail ke bucket `chart-screenshots` lalu menyimpan baris ke tabel `trading_analyses`.
 
 Lot dihitung dengan standar XAU/USD: **1 lot = 100 oz → $1 pergerakan = $100/lot**.
@@ -106,7 +106,7 @@ npm run dev                  # buka http://localhost:3000
 |---|---|
 | `Gemini API: API key not valid` | Cek `GEMINI_API_KEY` di Vercel / input UI, lalu Redeploy. |
 | `Gemini API: models/... is not found` | Nama model berubah di Google. Ganti `GEMINI_MODEL` di `lib/prompt.js` (mis. `gemini-flash-latest`). |
-| `Gemini API: ... quota / 429` | Kuota gratis (termasuk Google Search grounding) habis. Tunggu reset atau aktifkan billing. |
+| `Gemini API: ... quota / 429` | Kuota gratis Gemini habis. Tunggu reset atau aktifkan billing. |
 | `Supabase belum dikonfigurasi` | Env Supabase belum diisi / belum Redeploy. |
 | `new row violates row-level security` | SQL `schema.sql` belum dijalankan lengkap. Jalankan ulang. |
 | `Payload terlalu besar` / 413 | Kurangi jumlah screenshot (idealnya 4–8 gambar). |
@@ -118,3 +118,8 @@ npm run dev                  # buka http://localhost:3000
 - Policy RLS di `schema.sql` mengizinkan role `anon` membaca/menambah/menghapus agar aplikasi langsung jalan tanpa login. Artinya **siapa pun yang tahu URL aplikasi Anda bisa melihat & menghapus jurnal**. Jangan bagikan URL secara publik, atau tambahkan Supabase Auth / Vercel Password Protection bila diperlukan.
 
 > AureusDesk AI adalah alat bantu analisa, **bukan saran keuangan**. Trading emas berisiko tinggi.
+
+
+## Variabel Opsional
+- `APP_PIN` — PIN akses (default `123456`; ganti!).
+- `FINNHUB_API_KEY` — headline pasar forex Finnhub sebagai konteks sentimen tambahan (opsional).

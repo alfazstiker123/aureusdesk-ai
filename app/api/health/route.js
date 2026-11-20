@@ -2,13 +2,14 @@ import { NextResponse } from 'next/server';
 import { getSupabase, TABLE, BUCKET } from '@/lib/supabase';
 import { GEMINI_MODEL } from '@/lib/prompt';
 import { requirePin } from '@/lib/auth';
+import { getCalendar } from '@/lib/calendar';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 // GET /api/health            -> cek env + Supabase (tabel & bucket)
-// GET /api/health?gemini=1   -> + uji panggilan Gemini dengan Google Search
+// GET /api/health?gemini=1   -> + uji panggilan Gemini (tanpa search); ?calendar=1 uji feed kalender
 export async function GET(req) {
   const out = {
     env: {
@@ -18,6 +19,7 @@ export async function GET(req) {
     },
     supabase: { table: null, bucket: null },
     gemini: null,
+    calendar: null,
   };
 
   try {
@@ -31,6 +33,10 @@ export async function GET(req) {
   }
 
   const { searchParams } = new URL(req.url);
+  if (searchParams.get('calendar') === '1') {
+    const c = await getCalendar();
+    out.calendar = { events: c.events.length, fetchedAt: c.fetchedAt, stale: c.stale, error: c.error };
+  }
   if (searchParams.get('gemini') === '1') {
     const denied = requirePin(req); // uji Gemini memakai kuota -> wajib PIN
     if (denied) return denied;
@@ -47,7 +53,6 @@ export async function GET(req) {
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
           body: JSON.stringify({
             contents: [{ role: 'user', parts: [{ text: 'Sebutkan harga spot emas XAU/USD terbaru dalam 1 kalimat singkat.' }] }],
-            ...(searchParams.get('search') === '0' ? {} : { tools: [{ googleSearch: {} }] }),
             generationConfig: { maxOutputTokens: 200 },
           }),
           cache: 'no-store',

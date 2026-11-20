@@ -5,6 +5,7 @@ import Uploader, { guessLabel, TIMEFRAMES } from '@/components/Uploader';
 import HistoryPanel, { biasTone, toneClass, formatWIB } from '@/components/HistoryPanel';
 import MarkdownView from '@/components/MarkdownView';
 import PinGate from '@/components/PinGate';
+import CalendarWidget from '@/components/CalendarWidget';
 import { compressImage, makeThumbnail, formatKB } from '@/lib/imageCompress';
 import { PAIR_OPTIONS } from '@/lib/pairs';
 
@@ -14,7 +15,7 @@ const MAX_PAYLOAD = 4_000_000; // byte base64, di bawah limit 4.5MB Vercel
 
 const STAGES = [
   { key: 'compress', label: 'Mengompresi chart...' },
-  { key: 'search', label: 'Mencari berita fundamental The Fed...' },
+  { key: 'search', label: 'Memuat kalender ekonomi live & menganalisa chart...' },
   { key: 'save', label: 'Menyusun setup teknikal & menyimpan ke Supabase...' },
 ];
 
@@ -348,7 +349,7 @@ export default function Home() {
         );
       }
 
-      // 2) Gemini + Google Search
+      // 2) Gemini + kalender ekonomi live (disuntik server)
       setStage('search');
       const res = await apiFetch('/api/analyze', {
         method: 'POST',
@@ -440,7 +441,7 @@ export default function Home() {
               <h1 className="text-base font-extrabold leading-tight tracking-tight">
                 AureusDesk <span className="text-gold">AI</span>
               </h1>
-              <p className="truncate text-[11px] text-muted">Multi-Pair · Multi-Timeframe · Gemini + Live Search</p>
+              <p className="truncate text-[11px] text-muted">Multi-Pair · Multi-Timeframe · Gemini + Kalender Live</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -585,6 +586,9 @@ export default function Home() {
               </div>
             </div>
           </div>
+
+          {/* KALENDER EKONOMI LIVE */}
+          <CalendarWidget pair={pair} apiFetch={apiFetch} />
 
           {/* UPLOADER */}
           <div className="card p-4 print:hidden">
