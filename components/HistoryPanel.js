@@ -243,7 +243,19 @@ export default function HistoryPanel({ items, loading, error, activeId, onOpen, 
   const [period, setPeriod] = useState('all');
   const [custom, setCustom] = useState({ from: '', to: '' });
 
-  const filtered = useMemo(() => filterByPeriod(items, period, custom), [items, period, custom]);
+  const [pairFilter, setPairFilter] = useState('ALL');
+
+  const periodItems = useMemo(() => filterByPeriod(items, period, custom), [items, period, custom]);
+  // daftar pair dari seluruh riwayat; angka = jumlah pada periode terpilih
+  const pairChips = useMemo(() => {
+    const all = [...new Set(items.map((i) => i.pair).filter(Boolean))].sort();
+    return all.map((p) => ({ pair: p, count: periodItems.filter((i) => i.pair === p).length }));
+  }, [items, periodItems]);
+  const activePair = pairChips.some((c) => c.pair === pairFilter) ? pairFilter : 'ALL';
+  const filtered = useMemo(
+    () => (activePair === 'ALL' ? periodItems : periodItems.filter((i) => i.pair === activePair)),
+    [periodItems, activePair]
+  );
   const stats = useMemo(() => computeStats(filtered), [filtered]);
   const range = periodRange(period, custom);
   const rangeText =
@@ -261,7 +273,7 @@ export default function HistoryPanel({ items, loading, error, activeId, onOpen, 
     const a = document.createElement('a');
     a.href = url;
     const tag = period === 'custom' ? `${range.from || 'awal'}_${range.to || 'akhir'}` : period;
-    a.download = `aureusdesk-rekap-${tag}.csv`;
+    a.download = `aureusdesk-rekap-${activePair === 'ALL' ? '' : activePair + '-'}${tag}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -274,7 +286,7 @@ export default function HistoryPanel({ items, loading, error, activeId, onOpen, 
         <div>
           <h2 className="text-sm font-bold">📒 Riwayat Jurnal</h2>
           <p className="text-[11px] text-muted">
-            {filtered.length} dari {items.length} analisa · Supabase
+            {filtered.length} dari {items.length} analisa{activePair !== 'ALL' ? ` · ${activePair}` : ''} · Supabase
           </p>
         </div>
         <button type="button" onClick={onRefresh} className="btn-ghost px-3 py-1.5 text-xs" disabled={loading}>
@@ -292,6 +304,36 @@ export default function HistoryPanel({ items, loading, error, activeId, onOpen, 
         onExport={exportCsv}
         canExport={filtered.length > 0}
       />
+
+      {pairChips.length > 1 && (
+        <div className="border-b border-line px-3 py-2.5">
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted">Filter Pair</p>
+          <div className="chip-row" role="tablist" aria-label="Filter pair">
+            {[{ pair: 'ALL', count: periodItems.length }, ...pairChips].map((c) => {
+              const on = activePair === c.pair;
+              return (
+                <button
+                  key={c.pair}
+                  type="button"
+                  role="tab"
+                  aria-selected={on}
+                  onClick={() => setPairFilter(c.pair)}
+                  className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                    on
+                      ? 'border-gold bg-gold text-night'
+                      : 'border-line bg-panel2 text-muted hover:border-gold/50 hover:text-ink'
+                  }`}
+                >
+                  {c.pair === 'ALL' ? 'Semua Pair' : c.pair}
+                  <span className={`rounded-full px-1.5 text-[10px] ${on ? 'bg-night/20' : 'bg-night/60 text-muted'}`}>
+                    {c.count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 space-y-2 overflow-y-auto p-3 lg:max-h-[calc(100vh-170px)]">
         {error && <p className="rounded-lg border border-down/40 bg-down/10 p-3 text-xs text-down">{error}</p>}
@@ -315,9 +357,9 @@ export default function HistoryPanel({ items, loading, error, activeId, onOpen, 
           return (
             <div
               key={it.id}
-              className={`rounded-lg border p-3 transition ${
-                active ? 'border-gold bg-gold/5' : 'border-line bg-panel2 hover:border-gold/40'
-              }`}
+              className={`rounded-xl border border-l-4 p-3 transition ${
+                tone === 'up' ? 'border-l-up' : tone === 'down' ? 'border-l-down' : 'border-l-gold'
+              } ${active ? 'border-gold bg-gold/5' : 'border-line bg-panel2 hover:border-gold/40'}`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">

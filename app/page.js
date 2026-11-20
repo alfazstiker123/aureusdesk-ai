@@ -8,6 +8,7 @@ import PinGate from '@/components/PinGate';
 import CalendarWidget from '@/components/CalendarWidget';
 import { compressImage, makeThumbnail, formatKB } from '@/lib/imageCompress';
 import { PAIR_OPTIONS, resolvePair } from '@/lib/pairs';
+import { THEMES, THEME_KEY, THEME_META, resolveTheme } from '@/lib/themes';
 
 const SESSIONS = ['Sesi Asia', 'Sesi Eropa', 'Sesi New York'];
 const MAX_IMAGES = 12;
@@ -71,6 +72,7 @@ export default function Home() {
   const [session, setSession] = useState('Sesi Asia');
   const [pair, setPair] = useState('AUTO');
   const [copyFmt, setCopyFmt] = useState('ASLI');
+  const [theme, setTheme] = useState('gold');
 
   // Kunci PIN: 'checking' | 'locked' | 'open'
   const [auth, setAuth] = useState('checking');
@@ -112,6 +114,8 @@ export default function Home() {
       if (r) setRisk(r);
       const sp = localStorage.getItem(LS.pair);
       if (sp && PAIR_OPTIONS.some((o) => o.value === sp)) setPair(sp);
+      const th = localStorage.getItem(THEME_KEY);
+      if (th && THEMES.some((t) => t.key === th)) setTheme(th);
       const cf = localStorage.getItem(LS.copyFmt);
       if (cf && COPY_FORMATS.some((f) => f.key === cf)) setCopyFmt(cf);
     } catch {}
@@ -127,6 +131,22 @@ export default function Home() {
       else localStorage.removeItem(k);
     } catch {}
   };
+
+  // Terapkan tema (dan ikuti mode gelap/terang perangkat bila 'Auto')
+  useEffect(() => {
+    const mq = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : null;
+    const apply = () => {
+      const t = resolveTheme(theme, Boolean(mq && mq.matches));
+      document.documentElement.setAttribute('data-theme', t);
+      const m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.setAttribute('content', THEME_META[t] || '#0B0E11');
+    };
+    apply();
+    if (theme === 'auto' && mq) {
+      mq.addEventListener?.('change', apply);
+      return () => mq.removeEventListener?.('change', apply);
+    }
+  }, [theme]);
 
   useEffect(() => {
     if (auth === 'open') loadHistory();
@@ -469,11 +489,11 @@ export default function Home() {
   return (
     <div className="min-h-screen">
       {/* HEADER */}
-      <header className="app-header sticky top-0 z-30 border-b border-line bg-night/90 backdrop-blur print:hidden">
+      <header className="app-header sticky top-0 z-30 border-b border-line/70 bg-night/80 backdrop-blur-xl print:hidden">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3">
           <div className="flex min-w-0 items-center gap-2.5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/icon-192.png" alt="AureusDesk AI" width="36" height="36" className="h-9 w-9 flex-none rounded-lg" />
+            <img src="/icon-192.png" alt="AureusDesk AI" width="36" height="36" className="h-9 w-9 flex-none rounded-xl shadow-md" />
             <div className="min-w-0">
               <h1 className="text-base font-extrabold leading-tight tracking-tight">
                 AureusDesk <span className="text-gold">AI</span>
@@ -493,6 +513,7 @@ export default function Home() {
 
         {/* Tab mobile */}
         <div className="mx-auto flex max-w-7xl gap-1 px-4 pb-2 lg:hidden">
+          <div className="flex w-full gap-1 rounded-xl bg-panel2 p-1">
           {[
             ['analisa', '📈 Analisa'],
             ['riwayat', `📒 Riwayat (${history.length})`],
@@ -502,12 +523,13 @@ export default function Home() {
               type="button"
               onClick={() => setTab(k)}
               className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition ${
-                tab === k ? 'bg-gold text-night' : 'bg-panel text-muted'
+                tab === k ? 'bg-gold text-night shadow' : 'text-muted hover:text-ink'
               }`}
             >
               {l}
             </button>
           ))}
+          </div>
         </div>
       </header>
 
@@ -569,6 +591,42 @@ export default function Home() {
                     ? 'AI membaca nama pair di pojok kiri atas chart, lalu memakai pengali risiko pair itu.'
                     : 'Rumus risiko dikunci sesuai pair yang dipilih.'}
                 </p>
+              </div>
+
+              <div className="sm:col-span-2 lg:col-span-4">
+                <label className="field-label">Tema Tampilan</label>
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-6" role="radiogroup" aria-label="Tema tampilan">
+                  {THEMES.map((t) => {
+                    const on = theme === t.key;
+                    return (
+                      <button
+                        key={t.key}
+                        type="button"
+                        role="radio"
+                        aria-checked={on}
+                        title={t.hint || t.label}
+                        onClick={() => {
+                          setTheme(t.key);
+                          persist(THEME_KEY, t.key);
+                        }}
+                        className={`flex flex-col items-center gap-1.5 rounded-xl border px-2 py-2.5 text-[11px] font-semibold transition ${
+                          on ? 'border-gold bg-gold/10 text-ink ring-1 ring-gold/50' : 'border-line bg-panel2 text-muted hover:border-gold/40'
+                        }`}
+                      >
+                        <span className="flex -space-x-1.5">
+                          {t.swatch.map((c, i) => (
+                            <span
+                              key={i}
+                              className="h-4 w-4 rounded-full border border-black/20"
+                              style={{ background: c }}
+                            />
+                          ))}
+                        </span>
+                        {t.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div>

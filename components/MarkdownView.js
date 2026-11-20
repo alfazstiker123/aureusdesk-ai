@@ -118,6 +118,12 @@ const components = {
   tr: ({ node, children, ...props }) => {
     const headers = useContext(HeadersCtx);
     const decimals = useContext(DecimalsCtx);
+    // Warna arah: baris yang kolom pertamanya memuat BUY (hijau) atau SELL (merah)
+    const firstTd = Children.toArray(children).find((c) => isValidElement(c) && c.type === 'td');
+    const first = firstTd ? reactText(firstTd.props.children) : '';
+    const bi = first.search(/\bbuy\b/i);
+    const si = first.search(/\bsell\b/i);
+    const dir = bi >= 0 && (si < 0 || bi < si) ? 'row-buy' : si >= 0 ? 'row-sell' : '';
     let i = 0;
     const mapped = Children.map(children, (c) => {
       if (!isValidElement(c)) return c;
@@ -150,7 +156,7 @@ const components = {
         <span className="cv">{c.props.children}</span>
       );
     });
-    return <tr {...props}>{mapped}</tr>;
+    return <tr {...props} className={dir || undefined}>{mapped}</tr>;
   },
   a: ({ node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
 };
