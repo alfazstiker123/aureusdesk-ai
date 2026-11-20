@@ -361,9 +361,9 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-7xl gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <main className="mx-auto grid max-w-7xl grid-cols-1 gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_340px]">
         {/* KOLOM UTAMA */}
-        <section className={`space-y-4 ${tab === 'analisa' ? '' : 'hidden lg:block'} print:block`}>
+        <section className={`min-w-0 space-y-4 ${tab === 'analisa' ? '' : 'hidden lg:block'} print:block`}>
           {/* PENGATURAN */}
           <div className="card p-4 print:hidden">
             <h2 className="mb-3 text-sm font-bold">⚙️ Pengaturan Akun & API</h2>
@@ -513,7 +513,7 @@ export default function Home() {
           )}
 
           {result && (
-            <div ref={resultRef} className="card print-area scroll-mt-28 p-4 sm:p-6">
+            <div ref={resultRef} className="card print-area min-w-0 scroll-mt-28 p-4 sm:p-6">
               <div className="mb-4 flex flex-col gap-3 border-b border-line pb-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <p className="text-[11px] uppercase tracking-wider text-muted">Hasil Analisa XAU/USD</p>
@@ -559,7 +559,7 @@ export default function Home() {
         </section>
 
         {/* SIDEBAR RIWAYAT */}
-        <aside className={`${tab === 'riwayat' ? '' : 'hidden lg:block'} lg:sticky lg:top-20 lg:self-start print:hidden`}>
+        <aside className={`min-w-0 ${tab === 'riwayat' ? '' : 'hidden lg:block'} lg:sticky lg:top-20 lg:self-start print:hidden`}>
           <HistoryPanel
             items={history}
             loading={histLoading}
