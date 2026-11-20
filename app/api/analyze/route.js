@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { GEMINI_MODEL, buildSystemInstruction, buildUserPrompt, extractBias } from '@/lib/prompt';
 import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice } from '@/lib/pairs';
 import { requirePin } from '@/lib/auth';
+import { fixInlineTables } from '@/lib/markdownFix';
 import { buildFundamentalBlock } from '@/lib/calendar';
 import { verifyRiskTables } from '@/lib/riskCheck';
 
@@ -141,11 +142,13 @@ export async function POST(req) {
     }
 
     const candidate = json?.candidates?.[0];
-    const text = (candidate?.content?.parts || [])
-      .filter((p) => !p.thought)
-      .map((p) => p.text || '')
-      .join('')
-      .trim();
+    const text = fixInlineTables(
+      (candidate?.content?.parts || [])
+        .filter((p) => !p.thought)
+        .map((p) => p.text || '')
+        .join('')
+        .trim()
+    );
 
     if (!text) {
       const reason =

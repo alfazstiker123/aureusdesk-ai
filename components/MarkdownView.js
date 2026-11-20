@@ -1,8 +1,9 @@
 'use client';
 
-import { Children, cloneElement, createContext, isValidElement, useContext, useRef, useState } from 'react';
+import { Children, cloneElement, createContext, isValidElement, useContext, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { fixInlineTables } from '@/lib/markdownFix';
 
 // Label kolom tabel dibagikan ke setiap sel, dipakai tampilan kartu HP & tombol salin.
 const HeadersCtx = createContext([]);
@@ -143,10 +144,12 @@ const components = {
 };
 
 export default function MarkdownView({ content }) {
+  // juga memperbaiki analisa lama di riwayat yang tabelnya menyatu dalam satu baris
+  const fixed = useMemo(() => fixInlineTables(content || ''), [content]);
   return (
     <div className="md">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-        {content || ''}
+        {fixed}
       </ReactMarkdown>
     </div>
   );
