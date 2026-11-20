@@ -1,13 +1,10 @@
 import { NextResponse } from 'next/server';
-import { GEMINI_MODEL, primaryModel, buildSystemInstruction, buildUserPrompt, extractBias } from '@/lib/prompt';
+import { GEMINI_MODEL, buildSystemInstruction, buildUserPrompt, extractBias } from '@/lib/prompt';
 import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice } from '@/lib/pairs';
 import { requirePin } from '@/lib/auth';
 import { fixInlineTables } from '@/lib/markdownFix';
 import { buildFundamentalBlock } from '@/lib/calendar';
 import { verifyRiskTables } from '@/lib/riskCheck';
-import { applyOrderGuard } from '@/lib/zoneCheck';
-import { isValidAnalysis } from '@/lib/sections';
-import { gatewayConfig, callGateway, isGeminiModel, MODEL_ID_OK } from '@/lib/gateway';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,16 +17,8 @@ const BUDGET_MS = 52_000; // total waktu semua percobaan (di bawah maxDuration)
 
 // Urutan percobaan (tanpa Google Search): model utama -> model cadangan.
 // (gemini-2.5-flash & gemini-2.0-flash sudah dihentikan Google -> 404, jadi tidak dipakai.)
-// Model utama dari env GEMINI_PRIMARY_MODEL (bawaan: gemini-flash-lite-latest); sisanya cadangan tanpa duplikat.
-const FALLBACK_MODELS = [GEMINI_MODEL, 'gemini-flash-latest', 'gemini-3.8-flash'];
-// choice: 'auto' | id model gemini | id model gateway. Model gateway dicoba dulu (maks 30 dtk), lalu rantai Gemini sebagai cadangan.
-const buildAttempts = (choice, gatewayOn) => {
-  const picked = choice && choice !== 'auto' && MODEL_ID_OK(choice) ? choice : null;
-  const main = picked && isGeminiModel(picked) ? picked : primaryModel();
-  const chain = [main, ...FALLBACK_MODELS.filter((m) => m !== main)].map((model) => ({ model, provider: 'gemini' }));
-  if (picked && !isGeminiModel(picked) && gatewayOn) return [{ model: picked, provider: 'gateway' }, ...chain];
-  return chain;
-};
+const FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-3.8-flash'];
+const ATTEMPTS = [{ model: GEMINI_MODEL }, ...FALLBACK_MODELS.map((model) => ({ model }))];
 
 // Error yang layak dicoba ulang dengan model/mode lain (kuota, overload, model tidak ada, tool search ditolak)
 function shouldFallback(status, json) {
@@ -59,9 +48,7 @@ export async function POST(req) {
 
     // Prioritas: key dari UI (header) -> env Vercel
     const apiKey = (req.headers.get('x-gemini-key') || '').trim() || process.env.GEMINI_API_KEY;
-    const gwOn = Boolean(gatewayConfig());
-    const wantGateway = typeof body.model === 'string' && body.model !== 'auto' && MODEL_ID_OK(body.model) && !isGeminiModel(body.model);
-    if (!apiKey && !(wantGateway && gwOn)) {
+    if (!apiKey) {
       return NextResponse.json(
         { error: 'Gemini API Key belum diatur. Isi di pengaturan atau set GEMINI_API_KEY di Vercel.' },
         { status: 400 }
@@ -87,7 +74,7 @@ export async function POST(req) {
     const riskUsd = ((Number(balance) || 0) * (Number(risk) || 0)) / 100;
 
     // Kalender ekonomi live (ForexFactory) + Finnhub opsional; gagal -> tetap lanjut dengan catatan offline
-    const fundamental = await buildFundamentalBlock(fixedPair ? fixedPair.id : null, new Date(), apiKey).catch((e) => ({
+    const fundamental = await buildFundamentalBlock(fixedPair ? fixedPair.id : null).catch((e) => ({
       text: `=== DATA FUNDAMENTAL LIVE ===\nSTATUS KALENDER: OFFLINE (${e?.message || 'error'}). Jadwal berita TIDAK tersedia.\n=== AKHIR DATA FUNDAMENTAL ===`,
       offline: true,
     }));
@@ -112,36 +99,12 @@ export async function POST(req) {
     let res = null;
     let json = {};
     let used = null;
-    let gwText = '';
-    let gwErr = '';
-    let invalid = false;
     const log = [];
 
-    const ATTEMPTS = buildAttempts(body.model, gwOn);
     for (const attempt of ATTEMPTS) {
       const elapsed = Date.now() - t0;
       const remaining = BUDGET_MS - elapsed;
       if (used === null && log.length > 0 && remaining < 8_000) break; // sisa waktu terlalu sedikit
-
-      if (attempt.provider === 'gateway') {
-        const g = await callGateway({
-          model: attempt.model,
-          system: buildSystemInstruction(fixedPair),
-          userText: parts[0].text,
-          images,
-          labels,
-          timeoutMs: Math.min(30_000, remaining - 15_000),
-        });
-        log.push(`${attempt.model}@gateway: ${g.ok ? 200 : g.status || g.error}`);
-        if (g.ok && isValidAnalysis(g.text)) {
-          used = attempt;
-          gwText = g.text;
-          break;
-        }
-        gwErr = g.ok ? 'jawaban bukan analisa yang valid (model mungkin tidak membaca gambar)' : g.error || `HTTP ${g.status}`;
-        continue; // apa pun penyebabnya, lanjut ke cadangan Gemini
-      }
-      if (!apiKey) continue;
 
       try {
         const r = await fetch(`${BASE}/${attempt.model}:generateContent`, {
@@ -156,14 +119,8 @@ export async function POST(req) {
         res = r;
         json = j;
         if (r.ok) {
-          const t = (j?.candidates?.[0]?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || '').join('');
-          if (isValidAnalysis(t)) {
-            used = attempt;
-            break;
-          }
-          log.push(`${attempt.model}: jawaban tidak valid`);
-          invalid = true;
-          continue; // coba model berikutnya
+          used = attempt;
+          break;
         }
         if (!shouldFallback(r.status, j)) break; // mis. API key salah -> tidak ada gunanya mencoba lagi
       } catch (e) {
@@ -172,16 +129,9 @@ export async function POST(req) {
       }
     }
 
-    if (!used && invalid) {
-      return NextResponse.json(
-        { error: 'Model AI menghasilkan jawaban yang bukan analisa valid (kemungkinan tidak membaca gambar). Pilih model lain di Pengaturan > Model AI, lalu coba lagi.', attempts: log },
-        { status: 502 }
-      );
-    }
-
     if (!used) {
       const status = res?.status || 504;
-      let msg = json?.error?.message || (res ? `HTTP ${status}` : gwErr ? `Gateway: ${gwErr}` : 'Waktu habis menunggu Gemini.');
+      let msg = json?.error?.message || (res ? `HTTP ${status}` : 'Waktu habis menunggu Gemini.');
       if (status === 429) {
         msg =
           'Kuota Gemini API habis di semua model (429). Tunggu reset kuota, aktifkan billing di Google AI Studio, atau isi API Key lain di pengaturan. Detail: ' +
@@ -193,13 +143,11 @@ export async function POST(req) {
 
     const candidate = json?.candidates?.[0];
     const text = fixInlineTables(
-      used.provider === 'gateway'
-        ? gwText
-        : (candidate?.content?.parts || [])
-            .filter((p) => !p.thought)
-            .map((p) => p.text || '')
-            .join('')
-            .trim()
+      (candidate?.content?.parts || [])
+        .filter((p) => !p.thought)
+        .map((p) => p.text || '')
+        .join('')
+        .trim()
     );
 
     if (!text) {
@@ -228,33 +176,15 @@ export async function POST(req) {
     }
     let markdown = checked.markdown;
 
-    // Guardrail jarak/arah/konflik bias (tidak mengubah angka entry/SL/TP/lot; hanya kolom, label & peringatan)
-    let guard = { notes: [], flags: { cancel: [], shift: [] }, skipped: null };
-    if (pairCfg) {
-      try {
-        guard = applyOrderGuard(markdown, { pair: pairCfg, bias: extractBias(text) });
-        markdown = guard.markdown;
-      } catch (e) {
-        console.error('[analyze] orderGuard error:', e);
-      }
-    }
-
     const notices = [];
     if (pairNote) notices.push(pairNote);
-    if (used.model !== ATTEMPTS[0].model) {
-      const why = ATTEMPTS[0].provider === 'gateway' && gwErr ? ` (${gwErr})` : '';
-      notices.push(`ℹ️ Model pilihan \`${ATTEMPTS[0].model}\` tidak tersedia${why}; dijalankan otomatis dengan \`${used.model}\`.`);
+    if (used.model !== GEMINI_MODEL) {
+      notices.push(`ℹ️ Kuota model utama habis, dijalankan otomatis dengan \`${used.model}\`.`);
     }
     if (fundamental.offline) {
       notices.push('📅 Jadwal berita (ForexFactory) sedang offline — Bagian 1 tanpa jadwal. Cek kalender ekonomi secara manual.');
     } else if (fundamental.stale) {
       notices.push('📅 Kalender memakai data tersimpan (feed gagal diperbarui). Verifikasi jam rilis terbaru.');
-    }
-    if (!fundamental.offline && fundamental.pendingActual) {
-      notices.push('📅 Ada rilis berita yang angka Actual-nya belum ditemukan secara real-time. Tafsir fundamental hanya berupa skenario; generate ulang beberapa menit lagi.');
-    }
-    if (guard.notes.length) {
-      guard.notes.forEach((n) => notices.push(n));
     }
     if (notices.length) {
       markdown = notices.map((n) => `> ${n}`).join('\n>\n') + '\n\n' + markdown;
@@ -271,7 +201,6 @@ export async function POST(req) {
       model: used.model,
       calendarOffline: Boolean(fundamental.offline),
       riskCorrections: checked.notes.length,
-      orderGuard: { notes: guard.notes.length, cancel: guard.flags.cancel.length, shift: guard.flags.shift.length, skipped: guard.skipped },
       attempts: log,
     });
   } catch (err) {

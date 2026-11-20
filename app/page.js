@@ -29,7 +29,6 @@ const LS = {
   pin: 'aureus_pin',
   pair: 'aureus_pair',
   copyFmt: 'aureus_copyfmt',
-  model: 'aureus_model',
 };
 
 // Format digit tombol salin harga. 'ASLI' = apa adanya dari hasil analisa (bawaan).
@@ -76,7 +75,6 @@ export default function Home() {
   const [copyFmt, setCopyFmt] = useState('ASLI');
   const [theme, setTheme] = useState('gold');
   const [navMode, setNavMode] = useState(NAV_DEFAULT);
-  const [aiModel, setAiModel] = useState('auto');
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -124,8 +122,6 @@ export default function Home() {
       if (th && THEMES.some((t) => t.key === th)) setTheme(th);
       const nm = localStorage.getItem(NAV_KEY);
       if (nm && NAV_MODES.some((m) => m.key === nm)) setNavMode(nm);
-      const am = localStorage.getItem(LS.model);
-      if (am && /^[A-Za-z0-9][A-Za-z0-9._:\-/]{1,80}$/.test(am)) setAiModel(am);
       const cf = localStorage.getItem(LS.copyFmt);
       if (cf && COPY_FORMATS.some((f) => f.key === cf)) setCopyFmt(cf);
     } catch {}
@@ -419,7 +415,7 @@ export default function Home() {
           'Content-Type': 'application/json',
           ...(apiKey.trim() ? { 'x-gemini-key': apiKey.trim() } : {}),
         },
-        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, model: aiModel || 'auto' }),
+        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair }),
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || 'Gagal menganalisa.');
@@ -513,7 +509,7 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-2">
             <span className="hidden rounded-md border border-line bg-panel px-2 py-1 font-mono text-[11px] text-muted sm:block">
-              {result?.model || 'Gemini'}
+              gemini-flash-lite-latest
             </span>
             <div className="relative">
               <button
@@ -559,7 +555,7 @@ export default function Home() {
                       <span aria-hidden="true">🔒</span>
                       <span className="flex-1">Kunci Aplikasi</span>
                     </button>
-                    <p className="mt-1 border-t border-line px-3 pb-1.5 pt-2 font-mono text-[10px] text-muted">{result?.model || 'Gemini'}</p>
+                    <p className="mt-1 border-t border-line px-3 pb-1.5 pt-2 font-mono text-[10px] text-muted">gemini-flash-lite-latest</p>
                   </div>
                 </>
               )}
@@ -838,12 +834,6 @@ export default function Home() {
           setTheme(k);
           persist(THEME_KEY, k);
         }}
-        aiModel={aiModel}
-        onAiModel={(v) => {
-          setAiModel(v);
-          persist(LS.model, v === 'auto' ? '' : v);
-        }}
-        apiFetch={apiFetch}
         navMode={navMode}
         onNavMode={(k) => {
           setNavMode(k);

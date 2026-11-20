@@ -77,7 +77,7 @@ export default function CalendarWidget({ pair, apiFetch }) {
                 </p>
                 <p className="mt-0.5 text-[11px] text-muted">
                   Forecast {e.forecast} · Previous {e.previous}
-                  {e.actual ? <> · <span className="font-semibold text-ink">Actual {e.actual}{e.live ? ' (live)' : ''}</span></> : e.passed ? <> · <span className="text-gold">Actual: mencari…</span></> : null}
+                  {e.actual ? <> · <span className="font-semibold text-ink">Actual {e.actual}</span></> : null}
                 </p>
               </div>
             </li>

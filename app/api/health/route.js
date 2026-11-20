@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getSupabase, TABLE, BUCKET } from '@/lib/supabase';
-import { GEMINI_MODEL, primaryModel } from '@/lib/prompt';
+import { GEMINI_MODEL } from '@/lib/prompt';
 import { requirePin } from '@/lib/auth';
 import { getCalendar } from '@/lib/calendar';
-import { gatewayConfig, listGatewayModels, GATEWAY_PRESETS } from '@/lib/gateway';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,11 +16,9 @@ export async function GET(req) {
       NEXT_PUBLIC_SUPABASE_URL: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
       NEXT_PUBLIC_SUPABASE_ANON_KEY: Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
       GEMINI_API_KEY: Boolean(process.env.GEMINI_API_KEY),
-      OPENAI_COMPAT: Boolean(gatewayConfig()),
     },
     supabase: { table: null, bucket: null },
     gemini: null,
-    gateway: null,
     calendar: null,
   };
 
@@ -40,19 +37,14 @@ export async function GET(req) {
     const c = await getCalendar();
     out.calendar = { events: c.events.length, fetchedAt: c.fetchedAt, stale: c.stale, error: c.error };
   }
-  if (searchParams.get('gateway') === '1') {
-    const denied = requirePin(req); // memanggil gateway -> wajib PIN
-    if (denied) return denied;
-    out.gateway = { ...(await listGatewayModels()), presets: GATEWAY_PRESETS };
-  }
   if (searchParams.get('gemini') === '1') {
     const denied = requirePin(req); // uji Gemini memakai kuota -> wajib PIN
     if (denied) return denied;
   }
   if (searchParams.get('gemini') === '1' && process.env.GEMINI_API_KEY) {
     // ?model=... untuk menguji model fallback (hanya model yang diizinkan)
-    const allowed = [GEMINI_MODEL, primaryModel(), 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-flash-lite-latest'];
-    const testModel = allowed.includes(searchParams.get('model')) ? searchParams.get('model') : primaryModel();
+    const allowed = [GEMINI_MODEL, 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-flash-lite-latest'];
+    const testModel = allowed.includes(searchParams.get('model')) ? searchParams.get('model') : GEMINI_MODEL;
     try {
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${testModel}:generateContent`,

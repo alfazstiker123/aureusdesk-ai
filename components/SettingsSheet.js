@@ -3,29 +3,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { THEMES } from '@/lib/themes';
 import { NAV_MODES } from '@/lib/sections';
-import { GATEWAY_MODELS, GATEWAY_PRESETS } from '@/lib/modelPresets';
 
 // Panel Pengaturan: bottom-sheet di HP, dialog di tablet/desktop. Berisi Tema & API Key.
-export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, aiModel, onAiModel, apiFetch }) {
+export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey }) {
   const [showKey, setShowKey] = useState(false);
-  const [gw, setGw] = useState(null); // hasil Tes Koneksi gateway
-  const [testing, setTesting] = useState(false);
-
-  async function testGateway() {
-    setTesting(true);
-    setGw(null);
-    try {
-      const res = await apiFetch('/api/health?gateway=1', { cache: 'no-store' });
-      const j = await res.json().catch(() => ({}));
-      setGw(j.gateway || { ok: false, error: j.error || `HTTP ${res.status}` });
-    } catch (e) {
-      setGw({ ok: false, error: e.message || 'Gagal menghubungi server.' });
-    }
-    setTesting(false);
-  }
-
-  const gwModels = [...new Set([...(gw?.models || []), ...GATEWAY_PRESETS])];
-  const isPreset = aiModel === 'auto' || /^gemini/i.test(aiModel) || gwModels.includes(aiModel);
   const panelRef = useRef(null);
 
   useEffect(() => {
@@ -87,57 +68,6 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
               );
             })}
           </div>
-        </section>
-
-        <section className="mb-5">
-          <h3 className="field-label">Model AI</h3>
-          <select className="input" value={isPreset ? aiModel : '__custom'} onChange={(e) => onAiModel(e.target.value === '__custom' ? '' : e.target.value)} aria-label="Model AI">
-            <option value="auto">Otomatis (bawaan server)</option>
-            <optgroup label="Google Gemini">
-              <option value="gemini-flash-lite-latest">gemini-flash-lite-latest</option>
-              <option value="gemini-flash-latest">gemini-flash-latest</option>
-            </optgroup>
-            <optgroup label="Gateway (OpenAI-compatible)">
-              {GATEWAY_MODELS.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                  {m.guess ? ' (id perkiraan)' : ''}
-                </option>
-              ))}
-              {(gw?.models || [])
-                .filter((id) => !GATEWAY_PRESETS.includes(id))
-                .map((id) => (
-                  <option key={id} value={id}>
-                    {id}
-                  </option>
-                ))}
-            </optgroup>
-            <option value="__custom">Model lain (ketik manual)…</option>
-          </select>
-          {!isPreset && (
-            <input
-              className="input mt-2 font-mono"
-              placeholder="id model persis seperti di gateway"
-              value={aiModel}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(e) => onAiModel(e.target.value.trim())}
-            />
-          )}
-          <p className="mt-1.5 text-[11px] leading-relaxed text-muted">
-            Analisa membaca screenshot chart, jadi model gateway harus mendukung gambar (vision). Jika model gagal/tidak mendukung gambar, aplikasi otomatis
-            memakai Gemini sebagai cadangan. Kredensial gateway diatur di Vercel (OPENAI_COMPAT_BASE_URL &amp; OPENAI_COMPAT_API_KEY), bukan di sini.
-          </p>
-          <button type="button" className="btn-ghost mt-2 w-full text-xs" onClick={testGateway} disabled={testing}>
-            {testing ? 'Menguji…' : '🔌 Tes Koneksi Gateway'}
-          </button>
-          {gw && (
-            <p className={`mt-2 rounded-lg border px-3 py-2 text-[11px] leading-relaxed ${gw.ok ? 'border-up/40 text-up' : 'border-down/40 text-down'}`}>
-              {gw.ok
-                ? `✅ Terhubung. ${gw.total} model terdaftar di gateway (ditambahkan ke daftar di atas).`
-                : `❌ ${gw.error || 'Gagal'}${gw.status ? ` (HTTP ${gw.status})` : ''}`}
-            </p>
-          )}
         </section>
 
         <section className="mb-5">
