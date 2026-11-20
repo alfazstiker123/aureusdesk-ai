@@ -30,6 +30,7 @@ const LS = {
   pair: 'aureus_pair',
   copyFmt: 'aureus_copyfmt',
   manual: 'aureus_manual_actual',
+  model: 'aureus_model',
 };
 
 // Format digit tombol salin harga. 'ASLI' = apa adanya dari hasil analisa (bawaan).
@@ -76,6 +77,7 @@ export default function Home() {
   const [copyFmt, setCopyFmt] = useState('ASLI');
   const [theme, setTheme] = useState('gold');
   const [navMode, setNavMode] = useState(NAV_DEFAULT);
+  const [aiModel, setAiModel] = useState('auto');
   const [manualActual, setManualActual] = useState({});
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -129,6 +131,8 @@ export default function Home() {
         const today = new Date().toISOString().slice(0, 10);
         if (mj && mj.day === today && mj.map && typeof mj.map === 'object') setManualActual(mj.map);
       } catch {}
+      const am = localStorage.getItem(LS.model);
+      if (am && /^[A-Za-z0-9][A-Za-z0-9._:\-/]{1,80}$/.test(am)) setAiModel(am);
       const cf = localStorage.getItem(LS.copyFmt);
       if (cf && COPY_FORMATS.some((f) => f.key === cf)) setCopyFmt(cf);
     } catch {}
@@ -434,7 +438,7 @@ export default function Home() {
           'Content-Type': 'application/json',
           ...(apiKey.trim() ? { 'x-gemini-key': apiKey.trim() } : {}),
         },
-        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, manualActual }),
+        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, manualActual, model: aiModel || 'auto' }),
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || 'Gagal menganalisa.');
@@ -853,6 +857,12 @@ export default function Home() {
           setTheme(k);
           persist(THEME_KEY, k);
         }}
+        aiModel={aiModel}
+        onAiModel={(v) => {
+          setAiModel(v);
+          persist(LS.model, v === 'auto' ? '' : v);
+        }}
+        apiFetch={apiFetch}
         navMode={navMode}
         onNavMode={(k) => {
           setNavMode(k);

@@ -6,6 +6,7 @@ import { fixInlineTables } from '@/lib/markdownFix';
 import { buildFundamentalBlock } from '@/lib/calendar';
 import { verifyRiskTables } from '@/lib/riskCheck';
 import { applyOrderGuard } from '@/lib/zoneCheck';
+import { gatewayConfig, callGateway, isGeminiModel, MODEL_ID_OK } from '@/lib/gateway';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,9 +21,13 @@ const BUDGET_MS = 52_000; // total waktu semua percobaan (di bawah maxDuration)
 // (gemini-2.5-flash & gemini-2.0-flash sudah dihentikan Google -> 404, jadi tidak dipakai.)
 // Model utama dari env GEMINI_PRIMARY_MODEL (bawaan: gemini-flash-lite-latest); sisanya cadangan tanpa duplikat.
 const FALLBACK_MODELS = [GEMINI_MODEL, 'gemini-flash-latest', 'gemini-3.8-flash'];
-const buildAttempts = () => {
-  const main = primaryModel();
-  return [main, ...FALLBACK_MODELS.filter((m) => m !== main)].map((model) => ({ model }));
+// choice: 'auto' | id model gemini | id model gateway. Model gateway dicoba dulu (maks 30 dtk), lalu rantai Gemini sebagai cadangan.
+const buildAttempts = (choice, gatewayOn) => {
+  const picked = choice && choice !== 'auto' && MODEL_ID_OK(choice) ? choice : null;
+  const main = picked && isGeminiModel(picked) ? picked : primaryModel();
+  const chain = [main, ...FALLBACK_MODELS.filter((m) => m !== main)].map((model) => ({ model, provider: 'gemini' }));
+  if (picked && !isGeminiModel(picked) && gatewayOn) return [{ model: picked, provider: 'gateway' }, ...chain];
+  return chain;
 };
 
 // Error yang layak dicoba ulang dengan model/mode lain (kuota, overload, model tidak ada, tool search ditolak)
@@ -53,7 +58,9 @@ export async function POST(req) {
 
     // Prioritas: key dari UI (header) -> env Vercel
     const apiKey = (req.headers.get('x-gemini-key') || '').trim() || process.env.GEMINI_API_KEY;
-    if (!apiKey) {
+    const gwOn = Boolean(gatewayConfig());
+    const wantGateway = typeof body.model === 'string' && body.model !== 'auto' && MODEL_ID_OK(body.model) && !isGeminiModel(body.model);
+    if (!apiKey && !(wantGateway && gwOn)) {
       return NextResponse.json(
         { error: 'Gemini API Key belum diatur. Isi di pengaturan atau set GEMINI_API_KEY di Vercel.' },
         { status: 400 }
@@ -104,13 +111,35 @@ export async function POST(req) {
     let res = null;
     let json = {};
     let used = null;
+    let gwText = '';
+    let gwErr = '';
     const log = [];
 
-    const ATTEMPTS = buildAttempts();
+    const ATTEMPTS = buildAttempts(body.model, gwOn);
     for (const attempt of ATTEMPTS) {
       const elapsed = Date.now() - t0;
       const remaining = BUDGET_MS - elapsed;
       if (used === null && log.length > 0 && remaining < 8_000) break; // sisa waktu terlalu sedikit
+
+      if (attempt.provider === 'gateway') {
+        const g = await callGateway({
+          model: attempt.model,
+          system: buildSystemInstruction(fixedPair),
+          userText: parts[0].text,
+          images,
+          labels,
+          timeoutMs: Math.min(30_000, remaining - 15_000),
+        });
+        log.push(`${attempt.model}@gateway: ${g.ok ? 200 : g.status || g.error}`);
+        if (g.ok && g.text) {
+          used = attempt;
+          gwText = g.text;
+          break;
+        }
+        gwErr = g.ok ? 'respons kosong' : g.error || `HTTP ${g.status}`;
+        continue; // apa pun penyebabnya, lanjut ke cadangan Gemini
+      }
+      if (!apiKey) continue;
 
       try {
         const r = await fetch(`${BASE}/${attempt.model}:generateContent`, {
@@ -137,7 +166,7 @@ export async function POST(req) {
 
     if (!used) {
       const status = res?.status || 504;
-      let msg = json?.error?.message || (res ? `HTTP ${status}` : 'Waktu habis menunggu Gemini.');
+      let msg = json?.error?.message || (res ? `HTTP ${status}` : gwErr ? `Gateway: ${gwErr}` : 'Waktu habis menunggu Gemini.');
       if (status === 429) {
         msg =
           'Kuota Gemini API habis di semua model (429). Tunggu reset kuota, aktifkan billing di Google AI Studio, atau isi API Key lain di pengaturan. Detail: ' +
@@ -149,11 +178,13 @@ export async function POST(req) {
 
     const candidate = json?.candidates?.[0];
     const text = fixInlineTables(
-      (candidate?.content?.parts || [])
-        .filter((p) => !p.thought)
-        .map((p) => p.text || '')
-        .join('')
-        .trim()
+      used.provider === 'gateway'
+        ? gwText
+        : (candidate?.content?.parts || [])
+            .filter((p) => !p.thought)
+            .map((p) => p.text || '')
+            .join('')
+            .trim()
     );
 
     if (!text) {
@@ -196,7 +227,8 @@ export async function POST(req) {
     const notices = [];
     if (pairNote) notices.push(pairNote);
     if (used.model !== ATTEMPTS[0].model) {
-      notices.push(`ℹ️ Kuota model utama habis, dijalankan otomatis dengan \`${used.model}\`.`);
+      const why = ATTEMPTS[0].provider === 'gateway' && gwErr ? ` (${gwErr})` : '';
+      notices.push(`ℹ️ Model pilihan \`${ATTEMPTS[0].model}\` tidak tersedia${why}; dijalankan otomatis dengan \`${used.model}\`.`);
     }
     if (fundamental.offline) {
       notices.push('📅 Jadwal berita (ForexFactory) sedang offline — Bagian 1 tanpa jadwal. Cek kalender ekonomi secara manual.');
