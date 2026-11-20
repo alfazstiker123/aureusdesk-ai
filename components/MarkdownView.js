@@ -37,9 +37,15 @@ function copyKind(label = '') {
   return null;
 }
 
-function extractValues(text, kind) {
-  const re = kind === 'lot' ? /\d+\.\d{2}/g : /\d{3,5}(?:\.\d+)?/g;
-  return [...new Set(text.match(re) || [])];
+// Harga diambil UTUH: "1.09835" (forex), "150.500" (JPY), "3,584.74" / "3584.74" (emas), "98,500" (BTC).
+// Urutan alternatif penting: angka berkoma ribuan -> desimal -> bilangan bulat >= 4 digit.
+// (Bilangan bulat kecil seperti "1" pada "Zona 1" / "4A" sengaja tidak dianggap harga.)
+export const PRICE_RE = /\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d{4,7}/g;
+
+export function extractValues(text, kind) {
+  if (kind === 'lot') return [...new Set(text.match(/\d+\.\d{2}/g) || [])];
+  const vals = (text.match(PRICE_RE) || []).map((v) => v.replace(/,/g, ''));
+  return [...new Set(vals)];
 }
 
 async function copyText(text) {
