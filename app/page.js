@@ -7,7 +7,7 @@ import MarkdownView from '@/components/MarkdownView';
 import PinGate from '@/components/PinGate';
 import CalendarWidget from '@/components/CalendarWidget';
 import { compressImage, makeThumbnail, formatKB } from '@/lib/imageCompress';
-import { PAIR_OPTIONS } from '@/lib/pairs';
+import { PAIR_OPTIONS, resolvePair } from '@/lib/pairs';
 
 const SESSIONS = ['Sesi Asia', 'Sesi Eropa', 'Sesi New York'];
 const MAX_IMAGES = 12;
@@ -25,7 +25,17 @@ const LS = {
   risk: 'aureus_risk',
   pin: 'aureus_pin',
   pair: 'aureus_pair',
+  copyFmt: 'aureus_copyfmt',
 };
+
+// Format digit tombol salin harga. 'ASLI' = apa adanya dari hasil analisa (bawaan).
+const COPY_FORMATS = [
+  { key: 'ASLI', label: 'Asli', hint: 'Salin persis seperti tertulis di tabel' },
+  { key: 'AUTO', label: 'Auto', hint: 'Digit mengikuti pair hasil analisa' },
+  { key: 'GOLD', label: 'Emas 2', hint: 'XAUUSD: 2 digit desimal (3584.74)', dec: 2 },
+  { key: 'FX5', label: 'Forex 5', hint: 'EURUSD/GBPUSD/AUDUSD: 5 digit (1.09835)', dec: 5 },
+  { key: 'JPY3', label: 'JPY 3', hint: 'USDJPY/GBPJPY: 3 digit (157.250)', dec: 3 },
+];
 
 function detectSession() {
   const h = Number(
@@ -60,6 +70,7 @@ export default function Home() {
   const [risk, setRisk] = useState('2');
   const [session, setSession] = useState('Sesi Asia');
   const [pair, setPair] = useState('AUTO');
+  const [copyFmt, setCopyFmt] = useState('ASLI');
 
   // Kunci PIN: 'checking' | 'locked' | 'open'
   const [auth, setAuth] = useState('checking');
@@ -101,6 +112,8 @@ export default function Home() {
       if (r) setRisk(r);
       const sp = localStorage.getItem(LS.pair);
       if (sp && PAIR_OPTIONS.some((o) => o.value === sp)) setPair(sp);
+      const cf = localStorage.getItem(LS.copyFmt);
+      if (cf && COPY_FORMATS.some((f) => f.key === cf)) setCopyFmt(cf);
     } catch {}
     setSession(detectSession());
     checkStoredPin();
@@ -438,6 +451,11 @@ export default function Home() {
     showToast('📋 Hasil analisa disalin.');
   }
 
+  // Digit desimal untuk tombol salin harga (null = apa adanya)
+  const fmtDef = COPY_FORMATS.find((f) => f.key === copyFmt);
+  const priceDecimals =
+    copyFmt === 'AUTO' ? resolvePair(result?.meta?.pair)?.dec ?? null : fmtDef?.dec ?? null;
+
   if (auth !== 'open') {
     if (auth === 'checking') {
       return <div className="flex min-h-screen items-center justify-center text-xs text-muted">Memeriksa akses...</div>;
@@ -707,7 +725,27 @@ export default function Home() {
                 </div>
               )}
 
-              <MarkdownView content={result.markdown} />
+              <div className="mb-3 flex flex-wrap items-center gap-1.5 print:hidden">
+                <span className="text-[11px] text-muted">Digit tombol salin:</span>
+                {COPY_FORMATS.map((f) => (
+                  <button
+                    key={f.key}
+                    type="button"
+                    title={f.hint}
+                    onClick={() => {
+                      setCopyFmt(f.key);
+                      persist(LS.copyFmt, f.key);
+                    }}
+                    className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition ${
+                      copyFmt === f.key ? 'bg-gold text-night' : 'bg-panel2 text-muted hover:text-ink'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+
+              <MarkdownView content={result.markdown} priceDecimals={priceDecimals} />
             </div>
           )}
 

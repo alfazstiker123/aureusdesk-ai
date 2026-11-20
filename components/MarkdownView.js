@@ -7,6 +7,8 @@ import { fixInlineTables } from '@/lib/markdownFix';
 
 // Label kolom tabel dibagikan ke setiap sel, dipakai tampilan kartu HP & tombol salin.
 const HeadersCtx = createContext([]);
+// Jumlah digit desimal untuk tombol salin harga. null = salin apa adanya (perilaku bawaan).
+const DecimalsCtx = createContext(null);
 
 function textOf(n) {
   if (!n) return '';
@@ -115,12 +117,16 @@ const components = {
   ),
   tr: ({ node, children, ...props }) => {
     const headers = useContext(HeadersCtx);
+    const decimals = useContext(DecimalsCtx);
     let i = 0;
     const mapped = Children.map(children, (c) => {
       if (!isValidElement(c)) return c;
       const label = headers[i++] || '';
       const kind = c.type === 'td' ? copyKind(label) : null;
-      const values = kind ? extractValues(reactText(c.props.children), kind) : [];
+      let values = kind ? extractValues(reactText(c.props.children), kind) : [];
+      if (kind === 'price' && decimals != null) {
+        values = [...new Set(values.map((v) => (Number.isFinite(Number(v)) ? Number(v).toFixed(decimals) : v)))];
+      }
 
       if (values.length) {
         return cloneElement(
@@ -149,14 +155,16 @@ const components = {
   a: ({ node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
 };
 
-export default function MarkdownView({ content }) {
+export default function MarkdownView({ content, priceDecimals = null }) {
   // juga memperbaiki analisa lama di riwayat yang tabelnya menyatu dalam satu baris
   const fixed = useMemo(() => fixInlineTables(content || ''), [content]);
   return (
-    <div className="md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-        {fixed}
-      </ReactMarkdown>
-    </div>
+    <DecimalsCtx.Provider value={priceDecimals}>
+      <div className="md">
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+          {fixed}
+        </ReactMarkdown>
+      </div>
+    </DecimalsCtx.Provider>
   );
 }
