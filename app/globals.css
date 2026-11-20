@@ -226,6 +226,64 @@ a:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* Tombol salin harga (untuk MT4) */
+.md .pcell {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+.md .pbtns {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.md .copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  min-width: 36px;
+  min-height: 32px;
+  padding: 0.2rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid rgba(252, 213, 53, 0.45);
+  background: rgba(252, 213, 53, 0.1);
+  color: #fcd535;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.md .copy-btn:hover {
+  background: rgba(252, 213, 53, 0.2);
+}
+.md .copy-btn:active {
+  transform: scale(0.94);
+}
+.md .copy-btn.is-ok {
+  border-color: rgba(14, 203, 129, 0.6);
+  background: rgba(14, 203, 129, 0.15);
+  color: #0ecb81;
+}
+.md .copy-btn.is-fail {
+  border-color: rgba(246, 70, 93, 0.6);
+  background: rgba(246, 70, 93, 0.15);
+  color: #f6465d;
+}
+.md .copy-val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media print {
+  .md .copy-btn {
+    display: none !important;
+  }
+}
+
 /* HP & tablet kecil: tabel jadi kartu bertumpuk, semua kolom terbaca tanpa geser/zoom */
 @media screen and (max-width: 767px) {
   .md .table-wrap {
@@ -278,6 +336,13 @@ a:focus-visible {
     min-width: 0;
     text-align: right;
     overflow-wrap: anywhere;
+  }
+  .md td > .cv.pcell {
+    display: flex;
+    justify-content: flex-end;
+  }
+  .md .copy-btn {
+    min-height: 36px;
   }
   .md td:last-child {
     border-bottom: 0;
