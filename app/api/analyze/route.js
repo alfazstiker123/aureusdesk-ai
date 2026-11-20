@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
-import { GEMINI_MODEL, buildSystemInstruction, buildUserPrompt, extractBias } from '@/lib/prompt';
+import { GEMINI_MODEL, primaryModel, buildSystemInstruction, buildUserPrompt, extractBias } from '@/lib/prompt';
 import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice } from '@/lib/pairs';
 import { requirePin } from '@/lib/auth';
 import { fixInlineTables } from '@/lib/markdownFix';
 import { buildFundamentalBlock } from '@/lib/calendar';
 import { verifyRiskTables } from '@/lib/riskCheck';
+import { applyOrderGuard } from '@/lib/zoneCheck';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,8 +18,12 @@ const BUDGET_MS = 52_000; // total waktu semua percobaan (di bawah maxDuration)
 
 // Urutan percobaan (tanpa Google Search): model utama -> model cadangan.
 // (gemini-2.5-flash & gemini-2.0-flash sudah dihentikan Google -> 404, jadi tidak dipakai.)
-const FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-3.8-flash'];
-const ATTEMPTS = [{ model: GEMINI_MODEL }, ...FALLBACK_MODELS.map((model) => ({ model }))];
+// Model utama dari env GEMINI_PRIMARY_MODEL (bawaan: gemini-flash-lite-latest); sisanya cadangan tanpa duplikat.
+const FALLBACK_MODELS = [GEMINI_MODEL, 'gemini-flash-latest', 'gemini-3.8-flash'];
+const buildAttempts = () => {
+  const main = primaryModel();
+  return [main, ...FALLBACK_MODELS.filter((m) => m !== main)].map((model) => ({ model }));
+};
 
 // Error yang layak dicoba ulang dengan model/mode lain (kuota, overload, model tidak ada, tool search ditolak)
 function shouldFallback(status, json) {
@@ -74,7 +79,7 @@ export async function POST(req) {
     const riskUsd = ((Number(balance) || 0) * (Number(risk) || 0)) / 100;
 
     // Kalender ekonomi live (ForexFactory) + Finnhub opsional; gagal -> tetap lanjut dengan catatan offline
-    const fundamental = await buildFundamentalBlock(fixedPair ? fixedPair.id : null).catch((e) => ({
+    const fundamental = await buildFundamentalBlock(fixedPair ? fixedPair.id : null, new Date(), body.manualActual).catch((e) => ({
       text: `=== DATA FUNDAMENTAL LIVE ===\nSTATUS KALENDER: OFFLINE (${e?.message || 'error'}). Jadwal berita TIDAK tersedia.\n=== AKHIR DATA FUNDAMENTAL ===`,
       offline: true,
     }));
@@ -101,6 +106,7 @@ export async function POST(req) {
     let used = null;
     const log = [];
 
+    const ATTEMPTS = buildAttempts();
     for (const attempt of ATTEMPTS) {
       const elapsed = Date.now() - t0;
       const remaining = BUDGET_MS - elapsed;
@@ -176,15 +182,32 @@ export async function POST(req) {
     }
     let markdown = checked.markdown;
 
+    // Guardrail jarak/arah/konflik bias (tidak mengubah angka entry/SL/TP/lot; hanya kolom, label & peringatan)
+    let guard = { notes: [], flags: { cancel: [], shift: [] }, skipped: null };
+    if (pairCfg) {
+      try {
+        guard = applyOrderGuard(markdown, { pair: pairCfg, bias: extractBias(text) });
+        markdown = guard.markdown;
+      } catch (e) {
+        console.error('[analyze] orderGuard error:', e);
+      }
+    }
+
     const notices = [];
     if (pairNote) notices.push(pairNote);
-    if (used.model !== GEMINI_MODEL) {
+    if (used.model !== ATTEMPTS[0].model) {
       notices.push(`ℹ️ Kuota model utama habis, dijalankan otomatis dengan \`${used.model}\`.`);
     }
     if (fundamental.offline) {
       notices.push('📅 Jadwal berita (ForexFactory) sedang offline — Bagian 1 tanpa jadwal. Cek kalender ekonomi secara manual.');
     } else if (fundamental.stale) {
       notices.push('📅 Kalender memakai data tersimpan (feed gagal diperbarui). Verifikasi jam rilis terbaru.');
+    }
+    if (!fundamental.offline && fundamental.pendingActual && !fundamental.manualCount) {
+      notices.push('📅 Ada rilis berita yang angka Actual-nya belum tersedia di feed. Isi "Actual Manual" di widget kalender lalu generate ulang agar tafsir fundamental akurat.');
+    }
+    if (guard.notes.length) {
+      guard.notes.forEach((n) => notices.push(n));
     }
     if (notices.length) {
       markdown = notices.map((n) => `> ${n}`).join('\n>\n') + '\n\n' + markdown;
@@ -201,6 +224,7 @@ export async function POST(req) {
       model: used.model,
       calendarOffline: Boolean(fundamental.offline),
       riskCorrections: checked.notes.length,
+      orderGuard: { notes: guard.notes.length, cancel: guard.flags.cancel.length, shift: guard.flags.shift.length, skipped: guard.skipped },
       attempts: log,
     });
   } catch (err) {

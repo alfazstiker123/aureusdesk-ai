@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabase, TABLE, BUCKET } from '@/lib/supabase';
-import { GEMINI_MODEL } from '@/lib/prompt';
+import { GEMINI_MODEL, primaryModel } from '@/lib/prompt';
 import { requirePin } from '@/lib/auth';
 import { getCalendar } from '@/lib/calendar';
 
@@ -43,8 +43,8 @@ export async function GET(req) {
   }
   if (searchParams.get('gemini') === '1' && process.env.GEMINI_API_KEY) {
     // ?model=... untuk menguji model fallback (hanya model yang diizinkan)
-    const allowed = [GEMINI_MODEL, 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-flash-lite-latest'];
-    const testModel = allowed.includes(searchParams.get('model')) ? searchParams.get('model') : GEMINI_MODEL;
+    const allowed = [GEMINI_MODEL, primaryModel(), 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-flash-lite-latest'];
+    const testModel = allowed.includes(searchParams.get('model')) ? searchParams.get('model') : primaryModel();
     try {
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${testModel}:generateContent`,

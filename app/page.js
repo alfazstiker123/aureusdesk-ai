@@ -29,6 +29,7 @@ const LS = {
   pin: 'aureus_pin',
   pair: 'aureus_pair',
   copyFmt: 'aureus_copyfmt',
+  manual: 'aureus_manual_actual',
 };
 
 // Format digit tombol salin harga. 'ASLI' = apa adanya dari hasil analisa (bawaan).
@@ -75,6 +76,7 @@ export default function Home() {
   const [copyFmt, setCopyFmt] = useState('ASLI');
   const [theme, setTheme] = useState('gold');
   const [navMode, setNavMode] = useState(NAV_DEFAULT);
+  const [manualActual, setManualActual] = useState({});
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -122,6 +124,11 @@ export default function Home() {
       if (th && THEMES.some((t) => t.key === th)) setTheme(th);
       const nm = localStorage.getItem(NAV_KEY);
       if (nm && NAV_MODES.some((m) => m.key === nm)) setNavMode(nm);
+      try {
+        const mj = JSON.parse(localStorage.getItem(LS.manual) || 'null');
+        const today = new Date().toISOString().slice(0, 10);
+        if (mj && mj.day === today && mj.map && typeof mj.map === 'object') setManualActual(mj.map);
+      } catch {}
       const cf = localStorage.getItem(LS.copyFmt);
       if (cf && COPY_FORMATS.some((f) => f.key === cf)) setCopyFmt(cf);
     } catch {}
@@ -130,6 +137,18 @@ export default function Home() {
     return () => imagesRef.current.forEach((i) => URL.revokeObjectURL(i.preview));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const setManual = (key, val) => {
+    setManualActual((m) => {
+      const next = { ...m };
+      if (String(val).trim()) next[key] = String(val).trim();
+      else delete next[key];
+      try {
+        localStorage.setItem(LS.manual, JSON.stringify({ day: new Date().toISOString().slice(0, 10), map: next }));
+      } catch {}
+      return next;
+    });
+  };
 
   const persist = (k, v) => {
     try {
@@ -415,7 +434,7 @@ export default function Home() {
           'Content-Type': 'application/json',
           ...(apiKey.trim() ? { 'x-gemini-key': apiKey.trim() } : {}),
         },
-        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair }),
+        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, manualActual }),
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || 'Gagal menganalisa.');
@@ -509,7 +528,7 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-2">
             <span className="hidden rounded-md border border-line bg-panel px-2 py-1 font-mono text-[11px] text-muted sm:block">
-              gemini-flash-lite-latest
+              {result?.model || 'Gemini'}
             </span>
             <div className="relative">
               <button
@@ -555,7 +574,7 @@ export default function Home() {
                       <span aria-hidden="true">🔒</span>
                       <span className="flex-1">Kunci Aplikasi</span>
                     </button>
-                    <p className="mt-1 border-t border-line px-3 pb-1.5 pt-2 font-mono text-[10px] text-muted">gemini-flash-lite-latest</p>
+                    <p className="mt-1 border-t border-line px-3 pb-1.5 pt-2 font-mono text-[10px] text-muted">{result?.model || 'Gemini'}</p>
                   </div>
                 </>
               )}
@@ -675,7 +694,7 @@ export default function Home() {
           </div>
 
           {/* KALENDER EKONOMI LIVE */}
-          <CalendarWidget pair={pair} apiFetch={apiFetch} />
+          <CalendarWidget pair={pair} apiFetch={apiFetch} manual={manualActual} onManual={setManual} />
 
           {/* UPLOADER */}
           <div className="card p-4 print:hidden">

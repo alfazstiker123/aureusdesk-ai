@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-export default function CalendarWidget({ pair, apiFetch }) {
+export default function CalendarWidget({ pair, apiFetch, manual = {}, onManual }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
 
@@ -83,6 +83,41 @@ export default function CalendarWidget({ pair, apiFetch }) {
             </li>
           ))}
         </ul>
+      )}
+
+      {data && !data.offline && data.manualList?.length > 0 && onManual && (
+        <details className="mt-3 rounded-xl border border-line bg-panel2 p-2.5" open={data.pendingActual || Object.keys(manual).length > 0}>
+          <summary className="cursor-pointer select-none text-xs font-semibold">
+            ✍️ Actual Manual (opsional){Object.keys(manual).length > 0 ? ` · ${Object.keys(manual).length} terisi` : ''}
+            {data.pendingActual ? <span className="ml-1 text-gold">· ada rilis tanpa Actual di feed</span> : null}
+          </summary>
+          <p className="mb-2 mt-1.5 text-[10px] leading-relaxed text-muted">
+            Jika feed telat memperbarui angka, isi hasil rilis di sini (contoh 51.3, 4.5%, 225K). Angka ini dipakai sebagai acuan tertinggi saat Generate.
+          </p>
+          <ul className="space-y-1.5">
+            {data.manualList.map((e) => (
+              <li key={e.key} className="flex items-center gap-2">
+                <div className="min-w-0 flex-1 text-[11px] leading-snug">
+                  <span className="font-mono text-gold">{e.time}</span> {e.currency} · {e.title}
+                  <span className="block text-muted">
+                    Forecast {e.forecast} · Feed: {e.feedActual || 'belum ada'}
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  inputMode="text"
+                  autoComplete="off"
+                  maxLength={12}
+                  placeholder="Actual"
+                  aria-label={`Actual manual ${e.title}`}
+                  value={manual[e.key] || ''}
+                  onChange={(ev) => onManual(e.key, ev.target.value)}
+                  className="input !w-24 flex-none !py-1.5 text-center font-mono"
+                />
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
 
       {data && !data.offline && (
