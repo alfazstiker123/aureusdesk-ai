@@ -48,3 +48,49 @@ export async function DELETE(req, { params }) {
     return NextResponse.json({ error: err?.message || 'Gagal menghapus.' }, { status: 500 });
   }
 }
+
+const OUTCOMES = ['PENDING', 'WIN', 'LOSS', 'BEP', 'CANCEL'];
+
+// PATCH /api/history/:id  body: { outcome, pnl_usd?, eval_notes? } -> simpan evaluasi hasil trading
+export async function PATCH(req, { params }) {
+  const denied = requirePin(req);
+  if (denied) return denied;
+  try {
+    const { id } = await params;
+    if (!UUID_RE.test(id)) return NextResponse.json({ error: 'ID tidak valid.' }, { status: 400 });
+
+    const body = await req.json().catch(() => null);
+    const outcome = String(body?.outcome || '').toUpperCase();
+    if (!OUTCOMES.includes(outcome)) {
+      return NextResponse.json({ error: 'Outcome tidak valid.' }, { status: 400 });
+    }
+
+    // Nominal: boleh kosong -> 0. BEP/CANCEL/PENDING selalu 0 kecuali user mengisi (mis. biaya)
+    let pnl = 0;
+    if (body?.pnl_usd !== undefined && body.pnl_usd !== null && String(body.pnl_usd).trim() !== '') {
+      pnl = Number(String(body.pnl_usd).replace(/,/g, '').replace(/\s|\$/g, ''));
+      if (!Number.isFinite(pnl) || Math.abs(pnl) > 1e9) {
+        return NextResponse.json({ error: 'Nominal PnL tidak valid.' }, { status: 400 });
+      }
+    }
+    // Konsistensi tanda: WIN -> positif, LOSS -> negatif (user boleh mengetik tanpa tanda)
+    if (outcome === 'WIN') pnl = Math.abs(pnl);
+    if (outcome === 'LOSS') pnl = -Math.abs(pnl);
+    if (outcome === 'PENDING' || outcome === 'CANCEL') pnl = 0;
+    pnl = Math.round(pnl * 100) / 100;
+
+    const notes = String(body?.eval_notes ?? '').trim().slice(0, 500) || null;
+
+    const sb = getSupabase();
+    const { data, error } = await sb
+      .from(TABLE)
+      .update({ outcome, pnl_usd: pnl, eval_notes: notes })
+      .eq('id', id)
+      .select('id, outcome, pnl_usd, eval_notes')
+      .single();
+    if (error) throw error;
+    return NextResponse.json({ item: data });
+  } catch (err) {
+    return NextResponse.json({ error: err?.message || 'Gagal menyimpan evaluasi.' }, { status: 500 });
+  }
+}

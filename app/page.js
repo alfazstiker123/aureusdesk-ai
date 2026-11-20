@@ -256,6 +256,25 @@ export default function Home() {
     }
   }
 
+  // Simpan evaluasi (Hit TP / Hit SL / BEP / Cancel) -> PATCH ke Supabase, rekap ikut terhitung ulang
+  async function evaluateHistory(item, payload) {
+    try {
+      const res = await apiFetch(`/api/history/${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await safeJson(res);
+      if (!res.ok) throw new Error(data.error);
+      setHistory((h) => h.map((x) => (x.id === item.id ? { ...x, ...data.item } : x)));
+      showToast('✅ Evaluasi tersimpan');
+      return true;
+    } catch (e) {
+      showToast(e.message || 'Gagal menyimpan evaluasi.');
+      return false;
+    }
+  }
+
   async function deleteHistory(item) {
     if (!window.confirm(`Hapus analisa ${formatWIB(item.created_at)}?`)) return;
     setBusyId(item.id);
@@ -713,6 +732,7 @@ export default function Home() {
             busyId={busyId}
             onOpen={openHistory}
             onDelete={deleteHistory}
+            onEvaluate={evaluateHistory}
             onRefresh={loadHistory}
           />
         </aside>

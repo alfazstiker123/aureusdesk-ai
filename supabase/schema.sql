@@ -21,17 +21,32 @@ create table if not exists public.trading_analyses (
 alter table public.trading_analyses
   add column if not exists thumbnails jsonb not null default '[]'::jsonb;
 
+-- Evaluasi hasil trading (fitur Rekap Performa)
+alter table public.trading_analyses
+  add column if not exists outcome    text    not null default 'PENDING',
+  add column if not exists pnl_usd    numeric not null default 0,
+  add column if not exists eval_notes text;
+
+alter table public.trading_analyses drop constraint if exists trading_analyses_outcome_check;
+alter table public.trading_analyses
+  add constraint trading_analyses_outcome_check
+  check (outcome in ('PENDING','WIN','LOSS','BEP','CANCEL'));
+
+create index if not exists trading_analyses_outcome_idx
+  on public.trading_analyses (outcome);
+
 create index if not exists trading_analyses_created_at_idx
   on public.trading_analyses (created_at desc);
 
 -- 2) ROW LEVEL SECURITY ----------------------------------------------
 -- Aplikasi ini single-user tanpa login, jadi role anon diizinkan
--- membaca, menambah, dan menghapus. (Lihat README bagian Keamanan.)
+-- membaca, menambah, mengubah (kolom evaluasi saja), dan menghapus. (Lihat README bagian Keamanan.)
 alter table public.trading_analyses enable row level security;
 
 drop policy if exists "aureus_select" on public.trading_analyses;
 drop policy if exists "aureus_insert" on public.trading_analyses;
 drop policy if exists "aureus_delete" on public.trading_analyses;
+drop policy if exists "aureus_update" on public.trading_analyses;
 
 create policy "aureus_select" on public.trading_analyses
   for select to anon, authenticated using (true);
@@ -41,6 +56,13 @@ create policy "aureus_insert" on public.trading_analyses
 
 create policy "aureus_delete" on public.trading_analyses
   for delete to anon, authenticated using (true);
+
+create policy "aureus_update" on public.trading_analyses
+  for update to anon, authenticated using (true) with check (true);
+
+-- UPDATE dibatasi hanya ke kolom evaluasi (markdown/pair/dll tidak bisa diubah)
+revoke update on public.trading_analyses from anon, authenticated;
+grant update (outcome, pnl_usd, eval_notes) on public.trading_analyses to anon, authenticated;
 
 -- 3) STORAGE BUCKET UNTUK THUMBNAIL CHART ---------------------------
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)

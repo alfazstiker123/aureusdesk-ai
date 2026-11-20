@@ -6,7 +6,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const LIST_COLUMNS =
-  'id, created_at, pair, account_balance, risk_percent, session_label, summary_bias, thumbnails';
+  'id, created_at, pair, account_balance, risk_percent, session_label, summary_bias, thumbnails, outcome, pnl_usd, eval_notes';
 
 // GET /api/history -> daftar riwayat (tanpa markdown agar ringan)
 export async function GET(req) {
@@ -18,7 +18,7 @@ export async function GET(req) {
       .from(TABLE)
       .select(LIST_COLUMNS)
       .order('created_at', { ascending: false })
-      .limit(100);
+      .limit(2000);
 
     if (error) throw error;
     return NextResponse.json({ items: data || [] });
