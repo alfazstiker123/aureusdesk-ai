@@ -1,15 +1,50 @@
 import { NextResponse } from 'next/server';
 import { GEMINI_MODEL, SYSTEM_INSTRUCTION, buildUserPrompt, extractBias } from '@/lib/prompt';
+import { verifyRiskTables } from '@/lib/riskCheck';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // detik (batas aman Vercel Hobby)
 
-const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+const BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_IMAGES = 12;
+const BUDGET_MS = 52_000; // total waktu semua percobaan (di bawah maxDuration)
+
+// Urutan percobaan: model utama + Google Search -> model dengan kuota search lebih stabil
+// -> baru jatuh ke mode tanpa Google Search.
+const ATTEMPTS = [
+  { model: GEMINI_MODEL, search: true },
+  { model: 'gemini-2.5-flash', search: true },
+  { model: 'gemini-2.0-flash', search: true },
+  { model: GEMINI_MODEL, search: false },
+  { model: 'gemini-2.5-flash', search: false },
+];
+
+// Error yang layak dicoba ulang dengan model/mode lain (kuota, overload, model tidak ada, tool search ditolak)
+function shouldFallback(status, json) {
+  if ([404, 429, 500, 502, 503, 504].includes(status)) return true;
+  const msg = (json?.error?.message || '').toLowerCase();
+  const st = json?.error?.status || '';
+  return (
+    st === 'RESOURCE_EXHAUSTED' ||
+    st === 'UNAVAILABLE' ||
+    /quota|rate.?limit|exhausted|overload|unavailable|google.?search|grounding|tool/.test(msg)
+  );
+}
+
+function buildPayload(base, { model, search }) {
+  const payload = JSON.parse(JSON.stringify(base));
+  if (search) payload.tools = [{ googleSearch: {} }];
+  // Model 2.5 "berpikir": batasi budget agar token output tidak habis untuk berpikir
+  if (/^gemini-2\.5/.test(model)) {
+    payload.generationConfig.thinkingConfig = { thinkingBudget: 1024 };
+  }
+  return payload;
+}
 
 export async function POST(req) {
+  const t0 = Date.now();
   try {
     const body = await req.json().catch(() => null);
     if (!body) {
@@ -43,6 +78,7 @@ export async function POST(req) {
     }
 
     const labels = images.map((img) => img.label || 'Chart');
+    const riskUsd = ((Number(balance) || 0) * (Number(risk) || 0)) / 100;
 
     const parts = [{ text: buildUserPrompt({ balance, risk, session, labels }) }];
     images.forEach((img, i) => {
@@ -50,52 +86,60 @@ export async function POST(req) {
       parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
     });
 
-    const payload = {
+    const basePayload = {
       systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
       contents: [{ role: 'user', parts }],
-      tools: [{ googleSearch: {} }],
       generationConfig: {
-        temperature: 0.4,
+        temperature: 0.3,
         topP: 0.9,
         maxOutputTokens: 8192,
       },
     };
 
-    const callGemini = async (body) => {
-      const r = await fetch(ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: JSON.stringify(body),
-        cache: 'no-store',
-      });
-      return { res: r, json: await r.json().catch(() => ({})) };
-    };
+    // ---- Jalankan rantai percobaan ----
+    let res = null;
+    let json = {};
+    let used = null;
+    const log = [];
 
-    let { res, json } = await callGemini(payload);
-    let searchDisabled = false;
+    for (const attempt of ATTEMPTS) {
+      const elapsed = Date.now() - t0;
+      const remaining = BUDGET_MS - elapsed;
+      if (used === null && log.length > 0 && remaining < 8_000) break; // sisa waktu terlalu sedikit
 
-    // Kuota Google Search grounding habis (429) -> ulangi tanpa pencarian live
-    if (res.status === 429) {
-      const { tools, ...noSearch } = payload;
-      const retry = await callGemini(noSearch);
-      if (retry.res.ok) {
-        res = retry.res;
-        json = retry.json;
-        searchDisabled = true;
+      try {
+        const r = await fetch(`${BASE}/${attempt.model}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+          body: JSON.stringify(buildPayload(basePayload, attempt)),
+          cache: 'no-store',
+          signal: AbortSignal.timeout(Math.max(8_000, remaining)),
+        });
+        const j = await r.json().catch(() => ({}));
+        log.push(`${attempt.model}${attempt.search ? '+search' : ''}: ${r.status}`);
+        res = r;
+        json = j;
+        if (r.ok) {
+          used = attempt;
+          break;
+        }
+        if (!shouldFallback(r.status, j)) break; // mis. API key salah -> tidak ada gunanya mencoba lagi
+      } catch (e) {
+        log.push(`${attempt.model}${attempt.search ? '+search' : ''}: ${e?.name === 'TimeoutError' ? 'timeout' : e?.message}`);
+        res = null;
       }
     }
 
-    if (!res.ok) {
-      let msg = json?.error?.message || `HTTP ${res.status}`;
-      if (res.status === 429) {
+    if (!used) {
+      const status = res?.status || 504;
+      let msg = json?.error?.message || (res ? `HTTP ${status}` : 'Waktu habis menunggu Gemini.');
+      if (status === 429) {
         msg =
-          'Kuota Gemini API habis (429). Tunggu reset kuota (harian/per menit), aktifkan billing di Google AI Studio, atau isi API Key lain di pengaturan. Detail: ' +
+          'Kuota Gemini API habis di semua model (429). Tunggu reset kuota, aktifkan billing di Google AI Studio, atau isi API Key lain di pengaturan. Detail: ' +
           msg;
       }
-      return NextResponse.json({ error: `Gemini API: ${msg}` }, { status: res.status });
+      console.error('[analyze] semua percobaan gagal:', log.join(' | '));
+      return NextResponse.json({ error: `Gemini API: ${msg}`, attempts: log }, { status });
     }
 
     const candidate = json?.candidates?.[0];
@@ -108,7 +152,7 @@ export async function POST(req) {
     if (!text) {
       const reason =
         json?.promptFeedback?.blockReason || candidate?.finishReason || 'Respons kosong dari model.';
-      return NextResponse.json({ error: `AI tidak menghasilkan analisa (${reason}).` }, { status: 502 });
+      return NextResponse.json({ error: `AI tidak menghasilkan analisa (${reason}).`, attempts: log }, { status: 502 });
     }
 
     // Sumber dari Google Search Grounding
@@ -123,12 +167,21 @@ export async function POST(req) {
     }
     const queries = gm.webSearchQueries || [];
 
-    let markdown = text;
-    if (searchDisabled) {
-      markdown =
-        '> ⚠️ **Kuota Google Search habis** — analisa fundamental disusun TANPA berita live. Verifikasi kalender ekonomi secara manual.\n\n' +
-        markdown;
+    // Verifikasi rumus risiko: Risiko = Lot x Jarak SL x 100 (koreksi angka karangan AI)
+    const checked = verifyRiskTables(text, riskUsd);
+    let markdown = checked.markdown;
+
+    const notices = [];
+    if (used.model !== GEMINI_MODEL) {
+      notices.push(`ℹ️ Kuota model utama habis, dijalankan otomatis dengan \`${used.model}\`.`);
     }
+    if (!used.search) {
+      notices.push('⚠️ **Kuota Google Search habis** — analisa fundamental disusun TANPA berita live. Verifikasi kalender ekonomi secara manual.');
+    }
+    if (notices.length) {
+      markdown = notices.map((n) => `> ${n}`).join('\n>\n') + '\n\n' + markdown;
+    }
+
     if (sources.length) {
       markdown +=
         '\n\n---\n\n#### 🔎 Sumber Berita (Google Search Live)\n' +
@@ -142,7 +195,10 @@ export async function POST(req) {
       markdown,
       bias: extractBias(text),
       sources,
-      model: GEMINI_MODEL,
+      model: used.model,
+      searchUsed: used.search,
+      riskCorrections: checked.notes.length,
+      attempts: log,
     });
   } catch (err) {
     console.error('[analyze] error:', err);

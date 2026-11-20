@@ -31,9 +31,12 @@ export async function GET(req) {
 
   const { searchParams } = new URL(req.url);
   if (searchParams.get('gemini') === '1' && process.env.GEMINI_API_KEY) {
+    // ?model=... untuk menguji model fallback (hanya model yang diizinkan)
+    const allowed = [GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-2.0-flash'];
+    const testModel = allowed.includes(searchParams.get('model')) ? searchParams.get('model') : GEMINI_MODEL;
     try {
       const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${testModel}:generateContent`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
@@ -53,7 +56,7 @@ export async function GET(req) {
         const text = (cand?.content?.parts || []).map((p) => p.text || '').join('').trim();
         out.gemini = {
           status: 'OK',
-          model: GEMINI_MODEL,
+          model: testModel,
           grounded: Boolean(cand?.groundingMetadata?.groundingChunks?.length),
           sample: text.slice(0, 300),
         };
