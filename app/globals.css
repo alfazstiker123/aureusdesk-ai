@@ -499,7 +499,8 @@ a:focus-visible {
 
 /* Navigasi bagian analisa */
 .sec-nav {
-  background: rgb(var(--c-night) / 0.85);
+  --_x: 0;
+  background: rgb(var(--c-panel) / 0.92);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   scrollbar-width: none;

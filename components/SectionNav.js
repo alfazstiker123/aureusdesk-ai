@@ -72,30 +72,36 @@ export default function SectionNav({ content, priceDecimals, mode = 'jump' }) {
 
       <div
         ref={(el) => (refs.current.bar = el)}
-        className="sec-nav sticky z-30 -mx-1 mb-3 flex gap-1.5 overflow-x-auto px-1 py-2 print:hidden"
-        style={{ top: 'var(--hdr, 60px)' }}
+        className="sec-nav sticky z-30 mb-3 rounded-2xl border border-line p-1.5 shadow-lg print:hidden"
+        style={{ top: 'calc(var(--hdr, 60px) + 6px)' }}
         role="tablist"
         aria-label="Navigasi bagian analisa"
       >
-        {sections.map((s) => {
-          const meta = SECTION_META[s.n];
-          const on = cur === s.n && active !== null;
-          return (
-            <button
-              key={s.n}
-              type="button"
-              role="tab"
-              aria-selected={on}
-              title={s.title}
-              onClick={() => pick(s.n)}
-              className={`flex-none whitespace-nowrap rounded-full border px-3 py-2 text-xs font-semibold transition ${
-                on ? 'border-gold bg-gold text-night' : 'border-line bg-panel2 text-muted hover:border-gold/50 hover:text-ink'
-              }`}
-            >
-              <span aria-hidden="true">{meta.icon}</span> {s.n}. {meta.short}
-            </button>
-          );
-        })}
+        <div className="grid grid-cols-4 gap-1">
+          {sections.map((s) => {
+            const meta = SECTION_META[s.n];
+            const on = active !== null && cur === s.n;
+            return (
+              <button
+                key={s.n}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                title={s.title}
+                onClick={() => pick(s.n)}
+                className={`flex min-h-[48px] min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1.5 text-[11px] font-semibold leading-tight transition sm:flex-row sm:gap-1.5 sm:text-xs lg:text-sm ${
+                  on ? 'bg-gold text-night shadow' : 'text-muted hover:bg-panel2 hover:text-ink'
+                }`}
+              >
+                <span className="text-base leading-none sm:text-sm" aria-hidden="true">{meta.icon}</span>
+                <span className="max-w-full truncate">
+                  <span className="hidden sm:inline">{s.n}. </span>
+                  {meta.short}
+                </span>
+              </button>
+            );
+          })}
+        </div>
         {mode === 'accordion' && (
           <button
             type="button"
@@ -103,9 +109,9 @@ export default function SectionNav({ content, priceDecimals, mode = 'jump' }) {
               const all = sections.every((s) => open[s.n]);
               setOpen(Object.fromEntries(sections.map((s) => [s.n, !all])));
             }}
-            className="flex-none whitespace-nowrap rounded-full border border-line px-3 py-2 text-xs text-muted hover:text-ink"
+            className="mt-1 w-full rounded-lg py-1.5 text-[11px] text-muted hover:text-ink"
           >
-            {sections.every((s) => open[s.n]) ? 'Tutup semua' : 'Buka semua'}
+            {sections.every((s) => open[s.n]) ? 'Tutup semua bagian' : 'Buka semua bagian'}
           </button>
         )}
       </div>
@@ -116,7 +122,7 @@ export default function SectionNav({ content, priceDecimals, mode = 'jump' }) {
           <section
             key={s.n}
             ref={(el) => (refs.current[s.n] = el)}
-            className={`sec-block scroll-mt-[calc(var(--hdr,60px)+56px)] rounded-xl transition ${flash === s.n ? 'sec-flash' : ''}`}
+            className={`sec-block scroll-mt-[calc(var(--hdr,60px)+84px)] rounded-xl transition ${flash === s.n ? 'sec-flash' : ''}`}
           >
             {mode === 'accordion' && (
               <button
