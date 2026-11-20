@@ -239,11 +239,13 @@ function EvalControls({ it, onEvaluate }) {
   );
 }
 
-export default function HistoryPanel({ items, loading, error, activeId, onOpen, onDelete, onRefresh, busyId, onEvaluate }) {
+export default function HistoryPanel({ items, loading, error, activeId, onOpen, onDelete, onBulkDelete, onRefresh, busyId, onEvaluate }) {
   const [period, setPeriod] = useState('all');
   const [custom, setCustom] = useState({ from: '', to: '' });
 
   const [pairFilter, setPairFilter] = useState('ALL');
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
 
   const periodItems = useMemo(() => filterByPeriod(items, period, custom), [items, period, custom]);
   // daftar pair dari seluruh riwayat; angka = jumlah pada periode terpilih
@@ -257,6 +259,28 @@ export default function HistoryPanel({ items, loading, error, activeId, onOpen, 
     [periodItems, activePair]
   );
   const stats = useMemo(() => computeStats(filtered), [filtered]);
+  const selIds = useMemo(() => filtered.filter((i) => selected.has(i.id)).map((i) => i.id), [filtered, selected]);
+  const toggle = (id) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  const exitSelect = () => {
+    setSelectMode(false);
+    setSelected(new Set());
+  };
+  async function deleteSelected() {
+    if (!selIds.length) return;
+    if (!window.confirm(`Hapus ${selIds.length} riwayat terpilih? Tindakan ini tidak bisa dibatalkan.`)) return;
+    if (await onBulkDelete(selIds)) exitSelect();
+  }
+  async function deleteAll() {
+    if (!items.length) return;
+    const t = window.prompt(`Hapus SEMUA ${items.length} riwayat (semua pair & periode, termasuk thumbnail)? Tidak bisa dibatalkan.\nKetik HAPUS untuk melanjutkan.`);
+    if (t !== 'HAPUS') return;
+    if (await onBulkDelete(null)) exitSelect();
+  }
   const range = periodRange(period, custom);
   const rangeText =
     !range.from && !range.to
@@ -289,10 +313,39 @@ export default function HistoryPanel({ items, loading, error, activeId, onOpen, 
             {filtered.length} dari {items.length} analisa{activePair !== 'ALL' ? ` · ${activePair}` : ''} · Supabase
           </p>
         </div>
-        <button type="button" onClick={onRefresh} className="btn-ghost px-3 py-1.5 text-xs" disabled={loading}>
-          {loading ? 'Memuat…' : '↻ Refresh'}
-        </button>
+        <div className="flex gap-1.5">
+          {onBulkDelete && items.length > 0 && (
+            <button type="button" onClick={() => (selectMode ? exitSelect() : setSelectMode(true))} className="btn-ghost px-3 py-1.5 text-xs">
+              {selectMode ? 'Selesai' : '☑️ Pilih'}
+            </button>
+          )}
+          <button type="button" onClick={onRefresh} className="btn-ghost px-3 py-1.5 text-xs" disabled={loading}>
+            {loading ? 'Memuat…' : '↻ Refresh'}
+          </button>
+        </div>
       </div>
+
+      {selectMode && (
+        <div className="space-y-2 border-b border-down/30 bg-down/5 px-3 py-2.5">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <button type="button" className="btn-ghost px-2.5 py-1.5 text-[11px]" onClick={() => setSelected(new Set(filtered.map((i) => i.id)))}>
+              Pilih semua yang tampil ({filtered.length})
+            </button>
+            <button type="button" className="btn-ghost px-2.5 py-1.5 text-[11px]" onClick={() => setSelected(new Set())}>
+              Kosongkan
+            </button>
+            <span className="text-muted">{selIds.length} dipilih</span>
+          </div>
+          <div className="flex gap-2">
+            <button type="button" disabled={!selIds.length || busyId === 'bulk'} onClick={deleteSelected} className="btn flex-1 border border-down/50 px-3 py-1.5 text-xs text-down hover:bg-down/10 disabled:opacity-40">
+              {busyId === 'bulk' ? 'Menghapus…' : `🗑️ Hapus Terpilih (${selIds.length})`}
+            </button>
+            <button type="button" disabled={busyId === 'bulk'} onClick={deleteAll} className="btn border border-down bg-down/15 px-3 py-1.5 text-xs font-bold text-down hover:bg-down/25">
+              Hapus Semua ({items.length})
+            </button>
+          </div>
+        </div>
+      )}
 
       <Dashboard
         stats={stats}
@@ -362,7 +415,16 @@ export default function HistoryPanel({ items, loading, error, activeId, onOpen, 
               } ${active ? 'border-gold bg-gold/5' : 'border-line bg-panel2 hover:border-gold/40'}`}
             >
               <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
+                {selectMode && (
+                  <input
+                    type="checkbox"
+                    checked={selected.has(it.id)}
+                    onChange={() => toggle(it.id)}
+                    className="mt-0.5 h-5 w-5 flex-none accent-[#d4a017]"
+                    aria-label={`Pilih analisa ${formatWIB(it.created_at)}`}
+                  />
+                )}
+                <div className="min-w-0 flex-1">
                   <p className="text-xs font-semibold text-ink">{formatWIB(it.created_at)}</p>
                   <p className="mt-0.5 text-[11px] text-muted">
                     {it.pair} · {it.session_label || '-'} · ${Number(it.account_balance || 0).toLocaleString('en-US')} · {it.risk_percent}%

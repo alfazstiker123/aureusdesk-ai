@@ -337,6 +337,34 @@ export default function Home() {
     }
   }
 
+  // hapus banyak: ids = array (pilih sendiri) atau null = semua riwayat
+  async function bulkDeleteHistory(ids) {
+    const all = !ids;
+    setBusyId('bulk');
+    try {
+      const res = await apiFetch('/api/history', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(all ? { all: true, confirm: 'HAPUS' } : { ids }),
+      });
+      const data = await safeJson(res);
+      if (!res.ok) throw new Error(data.error);
+      const gone = all ? null : new Set(ids);
+      setHistory((h) => (all ? [] : h.filter((x) => !gone.has(x.id))));
+      if (all || gone.has(activeId)) {
+        setActiveId(null);
+        setResult(null);
+      }
+      showToast(all ? 'Semua riwayat dihapus.' : `${data.deleted ?? ids.length} riwayat dihapus.`);
+      return true;
+    } catch (e) {
+      showToast(e.message || 'Gagal menghapus.');
+      return false;
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   // ---- upload
   function addFiles(files) {
     setImages((prev) => {
@@ -823,6 +851,7 @@ export default function Home() {
             busyId={busyId}
             onOpen={openHistory}
             onDelete={deleteHistory}
+            onBulkDelete={bulkDeleteHistory}
             onEvaluate={evaluateHistory}
             onRefresh={loadHistory}
           />

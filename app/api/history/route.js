@@ -27,6 +27,52 @@ export async function GET(req) {
   }
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function removeThumbs(sb, rows) {
+  const paths = rows.flatMap((r) => (r.thumbnails || []).map((t) => t.path)).filter(Boolean);
+  for (let i = 0; i < paths.length; i += 500) {
+    await sb.storage.from(BUCKET).remove(paths.slice(i, i + 500));
+  }
+}
+
+// DELETE /api/history  body: { ids: [uuid,...] } (pilih sendiri) atau { all: true, confirm: "HAPUS" } (semua)
+export async function DELETE(req) {
+  const denied = requirePin(req);
+  if (denied) return denied;
+  try {
+    const body = await req.json().catch(() => null);
+    const sb = getSupabase();
+
+    if (body?.all === true) {
+      if (body.confirm !== 'HAPUS') return NextResponse.json({ error: 'Konfirmasi "HAPUS" diperlukan.' }, { status: 400 });
+      let deleted = 0;
+      for (let guard = 0; guard < 50; guard++) {
+        const { data: rows, error } = await sb.from(TABLE).select('id, thumbnails').limit(500);
+        if (error) throw error;
+        if (!rows?.length) break;
+        await removeThumbs(sb, rows);
+        const { error: dErr } = await sb.from(TABLE).delete().in('id', rows.map((r) => r.id));
+        if (dErr) throw dErr;
+        deleted += rows.length;
+      }
+      return NextResponse.json({ ok: true, deleted });
+    }
+
+    const ids = Array.isArray(body?.ids) ? [...new Set(body.ids.filter((x) => UUID_RE.test(String(x))))] : [];
+    if (!ids.length) return NextResponse.json({ error: 'Tidak ada riwayat yang dipilih.' }, { status: 400 });
+    if (ids.length > 500) return NextResponse.json({ error: 'Maksimal 500 riwayat sekali hapus.' }, { status: 400 });
+
+    const { data: rows } = await sb.from(TABLE).select('id, thumbnails').in('id', ids);
+    await removeThumbs(sb, rows || []);
+    const { error } = await sb.from(TABLE).delete().in('id', ids);
+    if (error) throw error;
+    return NextResponse.json({ ok: true, deleted: (rows || []).length, ids });
+  } catch (err) {
+    return NextResponse.json({ error: err?.message || 'Gagal menghapus.' }, { status: 500 });
+  }
+}
+
 function slug(s = '') {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 30) || 'chart';
 }
