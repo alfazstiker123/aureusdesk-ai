@@ -5,6 +5,7 @@ import { requirePin } from '@/lib/auth';
 import { fixInlineTables } from '@/lib/markdownFix';
 import { buildFundamentalBlock } from '@/lib/calendar';
 import { verifyRiskTables } from '@/lib/riskCheck';
+import { applyOrderGuard } from '@/lib/zoneCheck';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -45,6 +46,7 @@ export async function POST(req) {
     const { images = [], balance = 0, risk = 2, session = '' } = body;
     const pairChoice = PAIR_ID_OK(body.pair) ? body.pair : 'AUTO';
     const fixedPair = pairChoice === 'AUTO' ? null : PAIRS[pairChoice];
+    const strict = body.strict !== false; // Validator Zona & Konflik Order (Pengaturan), default ON
 
     // Prioritas: key dari UI (header) -> env Vercel
     const apiKey = (req.headers.get('x-gemini-key') || '').trim() || process.env.GEMINI_API_KEY;
@@ -79,14 +81,14 @@ export async function POST(req) {
       offline: true,
     }));
 
-    const parts = [{ text: buildUserPrompt({ balance, risk, session, labels, pair: fixedPair, fundamental: fundamental.text }) }];
+    const parts = [{ text: buildUserPrompt({ balance, risk, session, labels, pair: fixedPair, fundamental: fundamental.text, strict }) }];
     images.forEach((img, i) => {
       parts.push({ text: `Gambar ${i + 1} — ${labels[i]}` });
       parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
     });
 
     const basePayload = {
-      systemInstruction: { parts: [{ text: buildSystemInstruction(fixedPair) }] },
+      systemInstruction: { parts: [{ text: buildSystemInstruction(fixedPair, strict) }] },
       contents: [{ role: 'user', parts }],
       generationConfig: {
         temperature: 0.3,
@@ -176,6 +178,17 @@ export async function POST(req) {
     }
     let markdown = checked.markdown;
 
+    // Validator zona & konflik order (jarak, arah, KONFLIK BIAS -> DISARANKAN BATALKAN/GESER); angka entry/SL/TP/lot tidak diubah
+    let guard = { notes: [], flags: { cancel: [], shift: [] }, skipped: null };
+    if (strict && pairCfg) {
+      try {
+        guard = applyOrderGuard(markdown, { pair: pairCfg, bias: extractBias(text) });
+        markdown = guard.markdown;
+      } catch (e) {
+        console.error('[analyze] orderGuard error:', e);
+      }
+    }
+
     const notices = [];
     if (pairNote) notices.push(pairNote);
     if (used.model !== GEMINI_MODEL) {
@@ -186,6 +199,7 @@ export async function POST(req) {
     } else if (fundamental.stale) {
       notices.push('📅 Kalender memakai data tersimpan (feed gagal diperbarui). Verifikasi jam rilis terbaru.');
     }
+    guard.notes.forEach((n) => notices.push(n));
     if (notices.length) {
       markdown = notices.map((n) => `> ${n}`).join('\n>\n') + '\n\n' + markdown;
     }
@@ -201,6 +215,8 @@ export async function POST(req) {
       model: used.model,
       calendarOffline: Boolean(fundamental.offline),
       riskCorrections: checked.notes.length,
+      strict,
+      orderGuard: { notes: guard.notes.length, cancel: guard.flags.cancel.length, shift: guard.flags.shift.length, skipped: guard.skipped },
       attempts: log,
     });
   } catch (err) {

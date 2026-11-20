@@ -29,6 +29,7 @@ const LS = {
   pin: 'aureus_pin',
   pair: 'aureus_pair',
   copyFmt: 'aureus_copyfmt',
+  strict: 'aureus_strict',
 };
 
 // Format digit tombol salin harga. 'ASLI' = apa adanya dari hasil analisa (bawaan).
@@ -75,6 +76,7 @@ export default function Home() {
   const [copyFmt, setCopyFmt] = useState('ASLI');
   const [theme, setTheme] = useState('gold');
   const [navMode, setNavMode] = useState(NAV_DEFAULT);
+  const [strict, setStrict] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -122,6 +124,7 @@ export default function Home() {
       if (th && THEMES.some((t) => t.key === th)) setTheme(th);
       const nm = localStorage.getItem(NAV_KEY);
       if (nm && NAV_MODES.some((m) => m.key === nm)) setNavMode(nm);
+      if (localStorage.getItem(LS.strict) === 'off') setStrict(false);
       const cf = localStorage.getItem(LS.copyFmt);
       if (cf && COPY_FORMATS.some((f) => f.key === cf)) setCopyFmt(cf);
     } catch {}
@@ -415,7 +418,7 @@ export default function Home() {
           'Content-Type': 'application/json',
           ...(apiKey.trim() ? { 'x-gemini-key': apiKey.trim() } : {}),
         },
-        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair }),
+        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict }),
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || 'Gagal menganalisa.');
@@ -833,6 +836,11 @@ export default function Home() {
         onTheme={(k) => {
           setTheme(k);
           persist(THEME_KEY, k);
+        }}
+        strict={strict}
+        onStrict={(v) => {
+          setStrict(v);
+          persist(LS.strict, v ? '' : 'off');
         }}
         navMode={navMode}
         onNavMode={(k) => {

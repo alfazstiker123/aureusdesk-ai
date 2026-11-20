@@ -5,7 +5,7 @@ import { THEMES } from '@/lib/themes';
 import { NAV_MODES } from '@/lib/sections';
 
 // Panel Pengaturan: bottom-sheet di HP, dialog di tablet/desktop. Berisi Tema & API Key.
-export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey }) {
+export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict }) {
   const [showKey, setShowKey] = useState(false);
   const panelRef = useRef(null);
 
@@ -68,6 +68,30 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
               );
             })}
           </div>
+        </section>
+
+        <section className="mb-5">
+          <h3 className="field-label">Validator Zona &amp; Konflik Order</h3>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={strict}
+            onClick={() => onStrict(!strict)}
+            className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left transition ${
+              strict ? 'border-gold bg-gold/10' : 'border-line bg-panel2'
+            }`}
+          >
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold">{strict ? 'AKTIF' : 'MATI'}</span>
+              <span className="mt-0.5 block text-[11px] leading-snug text-muted">
+                Batas jarak Zona 1/2 per pair, deteksi order melawan bias (DISARANKAN BATALKAN) dan terlalu jauh (DISARANKAN GESER), plus peringatan di Ringkasan
+                Cepat. Mati = perilaku prompt lama.
+              </span>
+            </span>
+            <span className={`relative h-6 w-11 flex-none rounded-full transition ${strict ? 'bg-gold' : 'bg-line'}`} aria-hidden="true">
+              <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${strict ? 'left-[22px]' : 'left-0.5'}`} />
+            </span>
+          </button>
         </section>
 
         <section className="mb-5">
