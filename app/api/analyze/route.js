@@ -6,6 +6,7 @@ import { fixInlineTables } from '@/lib/markdownFix';
 import { buildFundamentalBlock } from '@/lib/calendar';
 import { verifyRiskTables } from '@/lib/riskCheck';
 import { applyOrderGuard } from '@/lib/zoneCheck';
+import { isValidAnalysis } from '@/lib/sections';
 import { gatewayConfig, callGateway, isGeminiModel, MODEL_ID_OK } from '@/lib/gateway';
 
 export const runtime = 'nodejs';
@@ -86,7 +87,7 @@ export async function POST(req) {
     const riskUsd = ((Number(balance) || 0) * (Number(risk) || 0)) / 100;
 
     // Kalender ekonomi live (ForexFactory) + Finnhub opsional; gagal -> tetap lanjut dengan catatan offline
-    const fundamental = await buildFundamentalBlock(fixedPair ? fixedPair.id : null, new Date(), body.manualActual).catch((e) => ({
+    const fundamental = await buildFundamentalBlock(fixedPair ? fixedPair.id : null, new Date(), apiKey).catch((e) => ({
       text: `=== DATA FUNDAMENTAL LIVE ===\nSTATUS KALENDER: OFFLINE (${e?.message || 'error'}). Jadwal berita TIDAK tersedia.\n=== AKHIR DATA FUNDAMENTAL ===`,
       offline: true,
     }));
@@ -113,6 +114,7 @@ export async function POST(req) {
     let used = null;
     let gwText = '';
     let gwErr = '';
+    let invalid = false;
     const log = [];
 
     const ATTEMPTS = buildAttempts(body.model, gwOn);
@@ -131,12 +133,12 @@ export async function POST(req) {
           timeoutMs: Math.min(30_000, remaining - 15_000),
         });
         log.push(`${attempt.model}@gateway: ${g.ok ? 200 : g.status || g.error}`);
-        if (g.ok && g.text) {
+        if (g.ok && isValidAnalysis(g.text)) {
           used = attempt;
           gwText = g.text;
           break;
         }
-        gwErr = g.ok ? 'respons kosong' : g.error || `HTTP ${g.status}`;
+        gwErr = g.ok ? 'jawaban bukan analisa yang valid (model mungkin tidak membaca gambar)' : g.error || `HTTP ${g.status}`;
         continue; // apa pun penyebabnya, lanjut ke cadangan Gemini
       }
       if (!apiKey) continue;
@@ -154,14 +156,27 @@ export async function POST(req) {
         res = r;
         json = j;
         if (r.ok) {
-          used = attempt;
-          break;
+          const t = (j?.candidates?.[0]?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || '').join('');
+          if (isValidAnalysis(t)) {
+            used = attempt;
+            break;
+          }
+          log.push(`${attempt.model}: jawaban tidak valid`);
+          invalid = true;
+          continue; // coba model berikutnya
         }
         if (!shouldFallback(r.status, j)) break; // mis. API key salah -> tidak ada gunanya mencoba lagi
       } catch (e) {
         log.push(`${attempt.model}: ${e?.name === 'TimeoutError' ? 'timeout' : e?.message}`);
         res = null;
       }
+    }
+
+    if (!used && invalid) {
+      return NextResponse.json(
+        { error: 'Model AI menghasilkan jawaban yang bukan analisa valid (kemungkinan tidak membaca gambar). Pilih model lain di Pengaturan > Model AI, lalu coba lagi.', attempts: log },
+        { status: 502 }
+      );
     }
 
     if (!used) {
@@ -235,8 +250,8 @@ export async function POST(req) {
     } else if (fundamental.stale) {
       notices.push('📅 Kalender memakai data tersimpan (feed gagal diperbarui). Verifikasi jam rilis terbaru.');
     }
-    if (!fundamental.offline && fundamental.pendingActual && !fundamental.manualCount) {
-      notices.push('📅 Ada rilis berita yang angka Actual-nya belum tersedia di feed. Isi "Actual Manual" di widget kalender lalu generate ulang agar tafsir fundamental akurat.');
+    if (!fundamental.offline && fundamental.pendingActual) {
+      notices.push('📅 Ada rilis berita yang angka Actual-nya belum ditemukan secara real-time. Tafsir fundamental hanya berupa skenario; generate ulang beberapa menit lagi.');
     }
     if (guard.notes.length) {
       guard.notes.forEach((n) => notices.push(n));
