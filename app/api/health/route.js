@@ -32,7 +32,7 @@ export async function GET(req) {
   const { searchParams } = new URL(req.url);
   if (searchParams.get('gemini') === '1' && process.env.GEMINI_API_KEY) {
     // ?model=... untuk menguji model fallback (hanya model yang diizinkan)
-    const allowed = [GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-2.0-flash'];
+    const allowed = [GEMINI_MODEL, 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-flash-lite-latest'];
     const testModel = allowed.includes(searchParams.get('model')) ? searchParams.get('model') : GEMINI_MODEL;
     try {
       const res = await fetch(

@@ -13,12 +13,13 @@ const BUDGET_MS = 52_000; // total waktu semua percobaan (di bawah maxDuration)
 
 // Urutan percobaan: model utama + Google Search -> model dengan kuota search lebih stabil
 // -> baru jatuh ke mode tanpa Google Search.
+// (gemini-2.5-flash & gemini-2.0-flash sudah dihentikan Google -> 404, jadi tidak dipakai.)
+const FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-3.8-flash'];
 const ATTEMPTS = [
   { model: GEMINI_MODEL, search: true },
-  { model: 'gemini-2.5-flash', search: true },
-  { model: 'gemini-2.0-flash', search: true },
+  ...FALLBACK_MODELS.map((model) => ({ model, search: true })),
   { model: GEMINI_MODEL, search: false },
-  { model: 'gemini-2.5-flash', search: false },
+  { model: FALLBACK_MODELS[0], search: false },
 ];
 
 // Error yang layak dicoba ulang dengan model/mode lain (kuota, overload, model tidak ada, tool search ditolak)
@@ -36,10 +37,6 @@ function shouldFallback(status, json) {
 function buildPayload(base, { model, search }) {
   const payload = JSON.parse(JSON.stringify(base));
   if (search) payload.tools = [{ googleSearch: {} }];
-  // Model 2.5 "berpikir": batasi budget agar token output tidak habis untuk berpikir
-  if (/^gemini-2\.5/.test(model)) {
-    payload.generationConfig.thinkingConfig = { thinkingBudget: 1024 };
-  }
   return payload;
 }
 
