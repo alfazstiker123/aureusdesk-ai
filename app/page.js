@@ -883,6 +883,15 @@ export default function Home() {
           setGwModel(v);
           persist(LS.gwModel, v);
         }}
+        onLoadModels={async () => {
+          try {
+            const r = await apiFetch('/api/health?gateway=1&models=1');
+            const j = await r.json().catch(() => ({}));
+            return j.gatewayModels || { ok: false, error: r.status === 401 ? 'PIN salah' : `HTTP ${r.status}` };
+          } catch (e) {
+            return { ok: false, error: e?.message || 'jaringan' };
+          }
+        }}
         onTestGateway={async () => {
           try {
             const r = await apiFetch(`/api/health?gateway=1&model=${encodeURIComponent(gwModel)}`);

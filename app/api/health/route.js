@@ -3,7 +3,7 @@ import { getSupabase, TABLE, BUCKET } from '@/lib/supabase';
 import { GEMINI_MODEL } from '@/lib/prompt';
 import { requirePin } from '@/lib/auth';
 import { getCalendar, calendarDebug } from '@/lib/calendar';
-import { gatewayChat, gwConfigured, gwModelOf } from '@/lib/gateway';
+import { gatewayChat, gatewayModels, gwConfigured, gwModelOf } from '@/lib/gateway';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -42,7 +42,9 @@ export async function GET(req) {
   if (searchParams.get('gateway') === '1') {
     const denied = requirePin(req);
     if (denied) return denied;
-    if (!gwConfigured()) {
+    if (searchParams.get('models') === '1') {
+      out.gatewayModels = await gatewayModels();
+    } else if (!gwConfigured()) {
       out.gateway = 'ERROR: env OPENAI_COMPAT_BASE_URL / OPENAI_COMPAT_API_KEY belum diisi';
     } else {
       const g = await gatewayChat({ model: gwModelOf(searchParams.get('model')), user: 'Balas satu kata: OK', maxTokens: 20, timeoutMs: 25000 });

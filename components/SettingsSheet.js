@@ -5,7 +5,7 @@ import { THEMES } from '@/lib/themes';
 import { NAV_MODES } from '@/lib/sections';
 
 // Panel Pengaturan: bottom-sheet di HP, dialog di tablet/desktop. Berisi Tema & API Key.
-export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, onTestGateway }) {
+export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, onTestGateway, onLoadModels }) {
   const [showKey, setShowKey] = useState(false);
   const panelRef = useRef(null);
 
@@ -106,6 +106,7 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
                 className="w-full rounded-xl border border-line bg-panel2 px-3 py-2 text-sm"
               />
               <GatewayTest onTest={onTestGateway} />
+              <ModelPicker onLoad={onLoadModels} current={gwModel} onPick={onGwModel} />
               <p className="mt-1 text-[11px] leading-snug text-muted">Bila tahap 1/2 gagal, otomatis kembali ke Gemini langsung. Lebih lambat (2 panggilan).</p>
             </div>
           ) : null}
@@ -210,6 +211,55 @@ function GatewayTest({ onTest }) {
         {busy ? 'Menguji…' : 'Uji Gateway'}
       </button>
       {res ? <p className="mt-1 break-words text-[11px] text-muted">{res}</p> : null}
+    </div>
+  );
+}
+
+const TIER = { 1: 'Murah / cepat', 2: 'Menengah', 3: 'Tertinggi' };
+function ModelPicker({ onLoad, current, onPick }) {
+  const [state, setState] = useState(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setState(await onLoad());
+          setBusy(false);
+        }}
+        className="rounded-lg border border-line bg-panel2 px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+      >
+        {busy ? 'Memuat…' : 'Muat Daftar Model'}
+      </button>
+      {state && !state.ok ? <p className="mt-1 text-[11px] text-muted">Gagal: {state.error}</p> : null}
+      {state?.ok ? (
+        <div className="mt-2 max-h-56 overflow-y-auto rounded-xl border border-line p-2">
+          <p className="mb-1 text-[10px] text-muted">Kasta = perkiraan dari nama model, bukan harga resmi. Cek harga di dashboard gateway.</p>
+          {[1, 2, 3].map((t) => {
+            const list = state.models.filter((m) => m.tier === t);
+            if (!list.length) return null;
+            return (
+              <div key={t} className="mb-2">
+                <div className="text-[11px] font-semibold text-gold">{t}. {TIER[t]} ({list.length})</div>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {list.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => onPick(m.id)}
+                      className={`rounded-md border px-2 py-1 text-[11px] ${current === m.id ? 'border-gold bg-gold/10' : 'border-line bg-panel2'}`}
+                    >
+                      {m.id}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }
