@@ -86,3 +86,12 @@ test('engine: support utuh memakai harga live (M5), bukan close TF tinggi', () =
   assert.equal(a.refPrice, 50);
   assert.ok(a.supports.every((x) => x.price < 50));
 });
+
+import { zoneEntry } from '../lib/smc/engine.js';
+test('zoneEntry: zona lebar -> entry mulai 50%, SL di luar zona + zona tetangga distal', () => {
+  const c = zoneEntry('SELL', { low: 56736.5, high: 58480.8 }, 750, 1000, [{ low: 56964.1, high: 58155 }]);
+  assert.ok(Math.abs(c.entryLo - 57608.65) < 0.01);
+  assert.ok(c.sl > 58480.8);
+  const b = zoneEntry('BUY', { low: 100, high: 110 }, 50, 20);
+  assert.equal(b.entryLo, 100); assert.ok(b.sl < 100);
+});

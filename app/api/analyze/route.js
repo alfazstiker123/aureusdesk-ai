@@ -57,8 +57,9 @@ async function loadMt4Context(pairId, zones = 2) {
     const smc = buildSmcReport(byTf);
     const report = smc?.analyses?.length ? `\n\nRINGKASAN SMC DETERMINISTIK (hasil kalkulasi candle tertutup; bukti, bukan sinyal otomatis):\n${smc.promptBlock}` : '';
     const feed = feedPriceInfo(snapshots);
-    const zc = zoneCandidateText(smc, profile, feed.price || quotePrice, zones);
-    return { text: marketContext(snapshots) + report + feed.line + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, feedPrice: feed.price, snapshots, smc, source: 'MT4_EA', warnings: [] };
+    const zcd = zoneCandidateData(smc, profile, feed.price || quotePrice, zones);
+    const zc = zcd.text;
+    return { text: marketContext(snapshots) + report + feed.line + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, zoneRes: zcd.res, feedPrice: feed.price, snapshots, smc, source: 'MT4_EA', warnings: [] };
   } catch (e) {
     return { text: `DATA OHLC MT4 tidak dapat diverifikasi (${e.message}).`, snapshots: [], smc: null, source: 'NONE', error: e.message };
   }
@@ -74,18 +75,20 @@ function feedPriceInfo(snapshots) {
   return { price, line: `\n\nHARGA FEED TERKINI (close candle ${q.timeframe} tertutup terakhir${wib ? `, ±${wib} WIB` : ''}): ${price}. Jika harga di screenshot berbeda >0.15% dari angka ini, screenshot basi: tulis "Harga Terakhir" = harga feed ini dan sebut singkat bahwa screenshot lebih lama.` };
 }
 
-function zoneCandidateText(smc, profile, price, zones = 2) {
+function zoneCandidateData(smc, profile, price, zones = 2) {
   try {
     const at = (tf) => smc?.analyses?.find((x) => x.timeframe === tf && x.status === 'OK')?.atr14;
     const h1 = at('H1'), h4 = at('H4'), m15 = at('M15');
     const atr = h1 > 0 && h4 > 0 ? { h1, h4, m15: m15 > 0 ? m15 : undefined, src: 'OHLC' } : null;
     if (zones === 3) {
       const R3 = zoneRange3(profile, price, atr);
-      return R3 ? buildZoneCandidates3(smc?.analyses, price, R3, { h1: h1 || R3.atr.h1, m15: R3.atr.m15 })?.text || '' : '';
+      const c = R3 ? buildZoneCandidates3(smc?.analyses, price, R3, { h1: h1 || R3.atr.h1, m15: R3.atr.m15 }) : null;
+      return { text: c?.text || '', res: c?.res || null };
     }
     const R = zoneRange(profile, price, atr);
-    return buildZoneCandidates(smc?.analyses, price, R, h1 || 0)?.text || '';
-  } catch { return ''; }
+    const c = buildZoneCandidates(smc?.analyses, price, R, h1 || 0);
+    return { text: c?.text || '', res: c ? { SELL: { 1: c.res.SELL.z1, 2: c.res.SELL.z2 }, BUY: { 1: c.res.BUY.z1, 2: c.res.BUY.z2 } } : null };
+  } catch { return { text: '', res: null }; }
 }
 
 async function loadMarketContext(pairId, sourceMode = 'cloud', zones = 2) {
@@ -110,8 +113,9 @@ async function loadMarketContext(pairId, sourceMode = 'cloud', zones = 2) {
     const smc = buildSmcReport(byTf);
     const report = smc?.analyses?.length ? `\n\nRINGKASAN SMC DETERMINISTIK DARI CLOUD (candle tertutup; bukan sinyal otomatis):\n${smc.promptBlock}` : '';
     const feed = feedPriceInfo(snapshots);
-    const zc = zoneCandidateText(smc, profile, feed.price || quotePrice, zones);
-    return { text: cloudMarketContext(snapshots, result.warnings, result.provider) + report + feed.line + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, feedPrice: feed.price, snapshots, smc, source: 'CLOUD', provider: result.provider, warnings: result.warnings };
+    const zcd = zoneCandidateData(smc, profile, feed.price || quotePrice, zones);
+    const zc = zcd.text;
+    return { text: cloudMarketContext(snapshots, result.warnings, result.provider) + report + feed.line + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, zoneRes: zcd.res, feedPrice: feed.price, snapshots, smc, source: 'CLOUD', provider: result.provider, warnings: result.warnings };
   } catch (e) {
     return { text: `DATA OHLC CLOUD TIDAK TERSEDIA/VALID (${String(e.message || e).slice(0, 220)}). Gunakan screenshot saja dan jangan klaim konfirmasi OHLC.`, snapshots: [], smc: null, source: 'NONE', error: String(e.message || e) };
   }
@@ -431,7 +435,7 @@ export async function POST(req) {
       if (pairCfg && smcAnalyses?.length) {
         try {
           const feedPx = Number(mt4ContextUsed.feedPrice || 0);
-          const e = enforceSmcZones(rawTxt, { analyses: smcAnalyses, atrH1: smcAnalyses.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14 || 0, price: feedPx || parseLastPrice(rawTxt, pairCfg) || 0, priceRe: pairCfg.priceRe });
+          const e = enforceSmcZones(rawTxt, { analyses: smcAnalyses, atrH1: smcAnalyses.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14 || 0, price: feedPx || parseLastPrice(rawTxt, pairCfg) || 0, priceRe: pairCfg.priceRe, candidates: mt4ContextUsed.zoneRes || null });
           txt = e.markdown;
           smcNotes = e.notes;
           const atrH1v = smcAnalyses.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14 || 0;
