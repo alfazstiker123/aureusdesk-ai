@@ -76,3 +76,13 @@ test('engine: MN dianalisis dan support swing utuh terdeteksi', () => {
   assert.ok(mn.supports.every((s) => s.price < mn.lastPrice));
   assert.match(rep.compactBlock, /Support swing utuh/);
 });
+
+test('engine: support utuh memakai harga live (M5), bukan close TF tinggi', () => {
+  const mk = (n, step, base) => Array.from({ length: n }, (_, i) => { const p = base + Math.sin(i / 3) * 5 + (i % 7); return { time: 1_700_000_000 + i * step, open: p, high: p + 3, low: p - 3, close: p + 1 }; });
+  const w1 = mk(60, 604800, 100);
+  const m5 = mk(60, 300, 100); m5[m5.length - 1] = { ...m5.at(-1), close: 50, low: 49, high: 60, open: 58 }; // live jauh di bawah
+  const rep = buildSmcReport({ W1: w1, M5: m5 });
+  const a = rep.analyses.find((x) => x.timeframe === 'W1');
+  assert.equal(a.refPrice, 50);
+  assert.ok(a.supports.every((x) => x.price < 50));
+});
