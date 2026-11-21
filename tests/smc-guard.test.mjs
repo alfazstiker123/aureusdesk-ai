@@ -153,3 +153,38 @@ test('buildSmcReport: minFvgAtr membuang FVG mikro (forex)', () => {
   assert.ok(b.zones.filter((z) => z.source === 'FVG').length === 0);
   assert.ok(a.zones.filter((z) => z.source === 'FVG').length >= b.zones.filter((z) => z.source === 'FVG').length);
 });
+
+test('syncTargets: kolom TP 4B disamakan dengan TP1 Bagian 3', () => {
+  const md = [
+    '| Zona & Strategi | Zona Entry | Stop Loss (SL) | Take Profit 1 (TP1) | Take Profit 2 (TP2) | Syarat |',
+    '|---|---|---|---|---|---|',
+    '| SELL Zona 1 - Scalping | 1.09625 - 1.09668 | 1.09685 | 1.09532 | 1.09390 | x |',
+    '',
+    '| Order | Harga Entry | Stop Loss | Take Profit | Jarak SL | Lot Aman | Risiko ($) | R:R | Waktu |',
+    '|---|---|---|---|---|---|---|---|---|',
+    '| Sell Limit Zona 1 | 1.09625 | 1.09685 | 1.09450 | 0.00060 | 0.06 | $3.60 | 1:2.92 | x |',
+  ].join('\n');
+  const analyses = [{ status: 'OK', timeframe: 'H1', zones: [], supports: [], resistances: [] }];
+  const r = syncTargets(md, { analyses, atrH1: 0.00155, price: 1.09532, priceRe: /\d+(?:\.\d+)?/ });
+  const row4b = r.markdown.split('\n')[6];
+  assert.ok(row4b.includes('| 1.09532 |'), row4b);
+  assert.ok(!r.markdown.includes('1.09450'));
+  assert.ok(r.notes.some((n) => /4B disamakan/.test(n)));
+});
+
+test('fixWeekendExpiry: baris Masa Berlaku ditulis ulang walau Waktu Berakhir sudah benar', async () => {
+  const { fixWeekendExpiry } = await import('../lib/weekendExpiry.js');
+  const md = [
+    '> - ⏳ Masa Berlaku Sinyal: Scalping (buka + 2 jam), Swing (Daily Close Senin 05:00 WIB)',
+    '',
+    '| Order | Harga Entry | Stop Loss | Take Profit | Jarak SL | Lot Aman | Risiko ($) | R:R | Waktu Berakhir (WIB) |',
+    '|---|---|---|---|---|---|---|---|---|',
+    '| Sell Limit Zona 1 (Scalping) | 1.09625 | 1.09685 | 1.09450 | 0.00060 | 0.06 | $3.60 | 1:2.9 | 23 Nov 2026, 07:00 WIB |',
+    '| Sell Limit Zona 3 (Swing) | 1.0986 | 1.10036 | 1.0930 | 0.00176 | 0.06 | $10.56 | 1:3.1 | 24 Nov 2026, 05:00 WIB |',
+  ].join('\n');
+  const r = fixWeekendExpiry(md, new Date(Date.UTC(2026, 10, 21, 8)), { id: 'EURUSD' });
+  assert.equal(r.changed, 0);
+  assert.match(r.markdown, /MAPPING AKHIR PEKAN/);
+  assert.match(r.markdown, /Swing hingga 24 Nov 2026, 05.00 WIB/);
+  assert.ok(!/Daily Close Senin/.test(r.markdown));
+});

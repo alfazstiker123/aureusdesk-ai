@@ -74,26 +74,28 @@ const QUOTE_GEN = { temperature: 0, maxOutputTokens: 160, responseMimeType: 'app
 
 /** Panggilan ringan: baca harga broker terakhir dari screenshot pertama (kalibrasi proksi). 0 bila gagal. */
 async function readChartPrice(images, apiKey, t0) {
-  const first = images?.[0];
-  if (!first) return 0;
-  const payload = {
-    systemInstruction: { parts: [{ text: QUOTE_SYSTEM }] },
-    contents: [{ role: 'user', parts: [{ text: 'Pair apa pada chart ini, dan berapa harga terakhirnya?' }, { inlineData: { mimeType: first.mimeType, data: first.data } }] }],
-    generationConfig: QUOTE_GEN,
-  };
-  for (const m of ['gemini-flash-lite-latest']) { // ringan & hemat kuota
-    if (BUDGET_MS - (Date.now() - t0) < 40_000) break;
-    try {
-      const r = await fetch(`${BASE}/${m}:generateContent`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify(payload), cache: 'no-store', signal: AbortSignal.timeout(7000),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) continue;
-      const txt = (j?.candidates?.[0]?.content?.parts || []).filter((x) => !x.thought).map((x) => x.text || '').join('').trim();
-      const px = Number(JSON.parse(txt.replace(/^```(?:json)?|```$/g, '').trim())?.price) || 0;
-      if (px > 0) return px;
-    } catch { /* coba model berikutnya */ }
+  // Coba gambar pertama lalu terakhir, flash-lite lalu model utama; harga harus lolos parse JSON.
+  const tries = [images?.[0], ...(images?.length > 1 ? [images[images.length - 1]] : [])].filter(Boolean);
+  for (const img of tries) {
+    const payload = {
+      systemInstruction: { parts: [{ text: QUOTE_SYSTEM }] },
+      contents: [{ role: 'user', parts: [{ text: 'Pair apa pada chart ini, dan berapa harga terakhirnya?' }, { inlineData: { mimeType: img.mimeType, data: img.data } }] }],
+      generationConfig: QUOTE_GEN,
+    };
+    for (const m of ['gemini-flash-lite-latest', GEMINI_MODEL]) {
+      if (BUDGET_MS - (Date.now() - t0) < 40_000) return 0;
+      try {
+        const r = await fetch(`${BASE}/${m}:generateContent`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+          body: JSON.stringify(payload), cache: 'no-store', signal: AbortSignal.timeout(9000),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) continue;
+        const txt = (j?.candidates?.[0]?.content?.parts || []).filter((x) => !x.thought).map((x) => x.text || '').join('').trim();
+        const px = Number(JSON.parse(txt.replace(/^```(?:json)?|```$/g, '').trim())?.price) || 0;
+        if (px > 0) return px;
+      } catch { /* coba berikutnya */ }
+    }
   }
   return 0;
 }
@@ -297,7 +299,7 @@ export async function POST(req) {
       offline: true,
     }));
 
-    if (resolvedPair && !chartPrice && !wantTwoStage && marketSource !== 'screenshot' && marketSource !== 'mt4' && cloudProxyOf(resolvedPair.id)) {
+    if (resolvedPair && !chartPrice && marketSource !== 'screenshot' && marketSource !== 'mt4' && cloudProxyOf(resolvedPair.id)) {
       chartPrice = await readChartPrice(images, apiKey, t0).catch(() => 0);
     }
     const sane = (px, p) => (px > 0 && (!p?.priceRange || (px >= p.priceRange[0] && px <= p.priceRange[1])) ? px : 0);
