@@ -215,12 +215,49 @@ function GatewayTest({ onTest }) {
   );
 }
 
+const PRESETS = [
+  ['DeepSeek V4.1 Flash', 1], ['DeepSeek V4 Flash', 1], ['GLM-5.3 Flash', 1], ['MiMo V2.6 Flash', 1],
+  ['Kimi K2.7 Code Highspeed', 2], ['Kimi K2.7 Code', 2], ['GLM-5.2', 2], ['GLM-5.3', 2], ['MiMo V2.5 Pro', 2], ['MiMo V2.6 Pro', 2], ['DeepSeek V4 Pro', 2],
+  ['Kimi K2.8', 3], ['GPT-6 Luna', 3],
+];
+const norm = (x) => String(x).toLowerCase().replace(/[^a-z0-9]/g, '');
+const slug = (x) => String(x).toLowerCase().replace(/[^a-z0-9.]+/g, '-');
+// Cocokkan nama tampilan dengan ID asli gateway bila daftar sudah dimuat; kalau tidak, pakai tebakan slug.
+function resolveId(name, models) {
+  const n = norm(name);
+  const hit = (models || []).find((m) => norm(m.id) === n);
+  return hit ? hit.id : slug(name);
+}
 const TIER = { 1: 'Murah / cepat', 2: 'Menengah', 3: 'Tertinggi' };
 function ModelPicker({ onLoad, current, onPick }) {
   const [state, setState] = useState(null);
   const [busy, setBusy] = useState(false);
+  const models = state?.ok ? state.models : null;
   return (
     <div className="mt-2">
+      <div className="mb-2 rounded-xl border border-line p-2">
+        <p className="mb-1 text-[10px] text-muted">Pilihan cepat (murah → tertinggi, urutan perkiraan). ID ditebak dari nama; bila gagal, muat daftar model lalu pilih ID aslinya.</p>
+        {[1, 2, 3].map((t) => (
+          <div key={t} className="mb-1.5">
+            <div className="text-[11px] font-semibold text-gold">{t}. {TIER[t]}</div>
+            <div className="mt-1 flex flex-wrap gap-1">
+              {PRESETS.filter((x) => x[1] === t).map(([name]) => {
+                const id = resolveId(name, models);
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => onPick(id)}
+                    className={`rounded-md border px-2 py-1 text-[11px] ${current === id ? 'border-gold bg-gold/10' : 'border-line bg-panel2'}`}
+                  >
+                    {name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
       <button
         type="button"
         disabled={busy}
