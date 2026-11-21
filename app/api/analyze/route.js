@@ -475,7 +475,7 @@ export async function POST(req) {
     const notices = [];
     if (mt4Status === 'OHLC_HYBRID' && mt4Report?.analyses?.length) {
       notices.push(`📡 Data Hybrid aktif: OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'Cloud' : 'MT4 EA'} diterima dan lolos pemeriksaan. SMC dihitung deterministik dari candle tertutup; bukan probabilitas profit.`);
-      markdown = `> 📡 **V2 — OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'CLOUD' : 'MT4'} + SMC**\n> Sumber: ${mt4ContextUsed.source === 'CLOUD' ? `${mt4ContextUsed.provider || 'Cloud'} (feed exchange publik, bukan broker Anda)` : 'MT4 EA'}. Cocokkan harga dengan chart broker sebelum menggunakan level.\n\n${mt4Report.promptBlock}\n\n---\n\n${markdown}`;
+      markdown = `> 📡 **V2 — OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'CLOUD' : 'MT4'} + SMC**\n> Sumber: ${mt4ContextUsed.source === 'CLOUD' ? `${mt4ContextUsed.provider || 'Cloud'} (feed exchange publik, bukan broker Anda)` : 'MT4 EA'}. Cocokkan harga dengan chart broker sebelum menggunakan level.\n\n${mt4Report.compactBlock}\n\n---\n\n${markdown}\n\n---\n\n### Lampiran: Detail SMC dari candle (referensi)\n\n\`\`\`text\n${mt4Report.promptBlock}\n\`\`\``;
     } else if (mt4Status === 'PRICE_MISMATCH') {
       notices.push(`🚫 PRICE MISMATCH: harga screenshot dan feed pasar berbeda ${mt4PriceDeltaPct?.toFixed(2)}%. Jangan gunakan level entry dari analisa ini sebelum simbol/instrumen, waktu screenshot, dan chart diperiksa ulang.`);
     } else if (pairCfg) {
