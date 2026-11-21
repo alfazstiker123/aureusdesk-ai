@@ -1,16 +1,16 @@
 import { NextResponse } from 'next/server';
-import { GEMINI_MODEL, GEMINI_FALLBACK_MODELS, buildSystemInstruction, buildUserPrompt, extractBias } from '@/lib/prompt';
-import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice, resolvePair, parseATR, zoneRange, rangeText } from '@/lib/pairs';
+import { GEMINI_MODEL, GEMINI_FALLBACK_MODELS, buildSystemInstruction, buildUserPrompt, extractBias, zoneStyleAddendum } from '@/lib/prompt';
+import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice, resolvePair, parseATR, zoneRange, zoneRange3, rangeText } from '@/lib/pairs';
 import { gatewayChat, gwConfigured, gwModelOf } from '@/lib/gateway';
 import { EXTRACT_SYSTEM, EXTRACT_SCHEMA, normalizeExtract, buildCandidates, formatDataBlock, STAGE2_ADDENDUM } from '@/lib/extract';
 import { requirePin } from '@/lib/auth';
 import { fixInlineTables } from '@/lib/markdownFix';
 import { buildFundamentalBlock } from '@/lib/calendar';
-import { verifyRiskTables } from '@/lib/riskCheck';
+import { verifyRiskTables, fixDailyClose } from '@/lib/riskCheck';
 import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
 import { getMarketSnapshots, marketContext, mt4SymbolForPair } from '@/lib/mt4Market';
 import { getCloudMarketSnapshots, cloudMarketContext } from '@/lib/cloudMarket';
-import { buildSmcReport, buildZoneCandidates } from '@/lib/smc/engine';
+import { buildSmcReport, buildZoneCandidates, buildZoneCandidates3 } from '@/lib/smc/engine';
 import { enforceSmcZones } from '@/lib/smc/guard';
 
 export const runtime = 'nodejs';
@@ -38,7 +38,7 @@ ATURAN V2 SMC — PRIORITAS SAAT OHLC CLOUD/MT4 TERSEDIA:
 - Order (Bagian 3/4B) hanya boleh di dalam OB/FVG fresh searah dari blok SMC; arah tanpa zona valid = tulis "Tidak ada level valid (tunggu)" dan 4B "Tidak Ada Setup (Tunggu)". Server membatalkan order di luar zona SMC fresh.
 - Jika data OHLC tidak lengkap, stale, atau pair tidak cocok, nyatakan VISUAL ONLY — CONFIDENCE TERBATAS dan jangan klaim konfirmasi OHLC.`;
 
-async function loadMt4Context(pairId) {
+async function loadMt4Context(pairId, zones = 2) {
   if (!pairId || !process.env.SUPABASE_SERVICE_ROLE_KEY) return { text: '', snapshots: [], smc: null, source: 'NONE' };
   try {
     const symbol = mt4SymbolForPair(pairId);
@@ -54,7 +54,7 @@ async function loadMt4Context(pairId) {
     const smc = buildSmcReport(byTf);
     const report = smc?.analyses?.length ? `\n\nRINGKASAN SMC DETERMINISTIK (hasil kalkulasi candle tertutup; bukti, bukan sinyal otomatis):\n${smc.promptBlock}` : '';
     const feed = feedPriceInfo(snapshots);
-    const zc = zoneCandidateText(smc, profile, feed.price || quotePrice);
+    const zc = zoneCandidateText(smc, profile, feed.price || quotePrice, zones);
     return { text: marketContext(snapshots) + report + feed.line + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, feedPrice: feed.price, snapshots, smc, source: 'MT4_EA', warnings: [] };
   } catch (e) {
     return { text: `DATA OHLC MT4 tidak dapat diverifikasi (${e.message}).`, snapshots: [], smc: null, source: 'NONE', error: e.message };
@@ -71,22 +71,27 @@ function feedPriceInfo(snapshots) {
   return { price, line: `\n\nHARGA FEED TERKINI (close candle ${q.timeframe} tertutup terakhir${wib ? `, ±${wib} WIB` : ''}): ${price}. Jika harga di screenshot berbeda >0.15% dari angka ini, screenshot basi: tulis "Harga Terakhir" = harga feed ini dan sebut singkat bahwa screenshot lebih lama.` };
 }
 
-function zoneCandidateText(smc, profile, price) {
+function zoneCandidateText(smc, profile, price, zones = 2) {
   try {
-    const h1 = smc?.analyses?.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14;
-    const h4 = smc?.analyses?.find((x) => x.timeframe === 'H4' && x.status === 'OK')?.atr14;
-    const R = zoneRange(profile, price, h1 > 0 && h4 > 0 ? { h1, h4, src: 'OHLC' } : null);
+    const at = (tf) => smc?.analyses?.find((x) => x.timeframe === tf && x.status === 'OK')?.atr14;
+    const h1 = at('H1'), h4 = at('H4'), m15 = at('M15');
+    const atr = h1 > 0 && h4 > 0 ? { h1, h4, m15: m15 > 0 ? m15 : undefined, src: 'OHLC' } : null;
+    if (zones === 3) {
+      const R3 = zoneRange3(profile, price, atr);
+      return R3 ? buildZoneCandidates3(smc?.analyses, price, R3, { h1: h1 || R3.atr.h1, m15: R3.atr.m15 })?.text || '' : '';
+    }
+    const R = zoneRange(profile, price, atr);
     return buildZoneCandidates(smc?.analyses, price, R, h1 || 0)?.text || '';
   } catch { return ''; }
 }
 
-async function loadMarketContext(pairId, sourceMode = 'cloud') {
+async function loadMarketContext(pairId, sourceMode = 'cloud', zones = 2) {
   if (!pairId || sourceMode === 'screenshot') return { text: '', snapshots: [], smc: null, source: 'SCREENSHOT' };
-  if (sourceMode === 'mt4') return loadMt4Context(pairId);
+  if (sourceMode === 'mt4') return loadMt4Context(pairId, zones);
   if (sourceMode === 'auto') {
-    const cloud = await loadMarketContext(pairId, 'cloud');
+    const cloud = await loadMarketContext(pairId, 'cloud', zones);
     if (cloud.snapshots?.length) return cloud;
-    const mt4 = await loadMt4Context(pairId);
+    const mt4 = await loadMt4Context(pairId, zones);
     if (mt4.snapshots?.length) return mt4;
     return { ...cloud, error: [cloud.error, mt4.error].filter(Boolean).join(' | ') };
   }
@@ -102,7 +107,7 @@ async function loadMarketContext(pairId, sourceMode = 'cloud') {
     const smc = buildSmcReport(byTf);
     const report = smc?.analyses?.length ? `\n\nRINGKASAN SMC DETERMINISTIK DARI CLOUD (candle tertutup; bukan sinyal otomatis):\n${smc.promptBlock}` : '';
     const feed = feedPriceInfo(snapshots);
-    const zc = zoneCandidateText(smc, profile, feed.price || quotePrice);
+    const zc = zoneCandidateText(smc, profile, feed.price || quotePrice, zones);
     return { text: cloudMarketContext(snapshots, result.warnings, result.provider) + report + feed.line + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, feedPrice: feed.price, snapshots, smc, source: 'CLOUD', provider: result.provider, warnings: result.warnings };
   } catch (e) {
     return { text: `DATA OHLC CLOUD TIDAK TERSEDIA/VALID (${String(e.message || e).slice(0, 220)}). Gunakan screenshot saja dan jangan klaim konfirmasi OHLC.`, snapshots: [], smc: null, source: 'NONE', error: String(e.message || e) };
@@ -147,6 +152,7 @@ export async function POST(req) {
     const pairChoice = PAIR_ID_OK(body.pair) ? body.pair : 'AUTO';
     const fixedPair = pairChoice === 'AUTO' ? null : PAIRS[pairChoice];
     const strict = body.strict !== false; // Validator Zona & Konflik Order (Pengaturan), default ON
+    const zones = strict && body.zoneStyle === 'three' ? 3 : 2; // Gaya Zona: 2 zona (lama) atau 3 zona (Scalp/Intraday/Swing)
     const wantTwoStage = body.mode === '2stage';
     const marketSource = ['cloud', 'mt4', 'auto', 'screenshot'].includes(body.marketSource) ? body.marketSource : 'cloud';
     const gwModel = gwModelOf(body.gwModel);
@@ -221,7 +227,7 @@ export async function POST(req) {
       offline: true,
     }));
 
-    const marketInitial = resolvedPair ? await loadMarketContext(resolvedPair.id, marketSource) : { text: '', snapshots: [], smc: null, source: 'NONE' };
+    const marketInitial = resolvedPair ? await loadMarketContext(resolvedPair.id, marketSource, zones) : { text: '', snapshots: [], smc: null, source: 'NONE' };
     let mt4ContextUsed = marketInitial;
     const parts = [{ text: buildUserPrompt({ balance, risk, session, labels, pair: resolvedPair || fixedPair, fundamental: fundamental.text, strict }) +
       (marketInitial.text ? `\n\n${marketInitial.text}` : '') }];
@@ -231,7 +237,7 @@ export async function POST(req) {
     });
 
     const basePayload = {
-      systemInstruction: { parts: [{ text: buildSystemInstruction(resolvedPair || fixedPair, strict) + (marketInitial.snapshots?.length ? SMC_SYSTEM_ADDENDUM : '') }] },
+      systemInstruction: { parts: [{ text: buildSystemInstruction(resolvedPair || fixedPair, strict) + (zones === 3 ? zoneStyleAddendum(resolvedPair || fixedPair) : '') + (marketInitial.snapshots?.length ? SMC_SYSTEM_ADDENDUM : '') }] },
       contents: [{ role: 'user', parts }],
       generationConfig: withThinking({
         temperature: 0.2,
@@ -309,8 +315,8 @@ export async function POST(req) {
           if (!data) throw new Error('ekstraksi gagal');
           const p2 = fixedPair || resolvedPair || resolvePair(data.pair) || (data.lastPrice ? guessPairByPrice(data.lastPrice) : null);
           const built = buildCandidates(data, p2);
-          const mt4Two = await loadMarketContext((fixedPair || p2)?.id, marketSource);
-          twoSystem = buildSystemInstruction(fixedPair || resolvedPair || p2, strict) + '\n' + STAGE2_ADDENDUM + (mt4Two.snapshots?.length ? SMC_SYSTEM_ADDENDUM : '');
+          const mt4Two = await loadMarketContext((fixedPair || p2)?.id, marketSource, zones);
+          twoSystem = buildSystemInstruction(fixedPair || resolvedPair || p2, strict) + (zones === 3 ? zoneStyleAddendum(fixedPair || resolvedPair || p2) : '') + '\n' + STAGE2_ADDENDUM + (mt4Two.snapshots?.length ? SMC_SYSTEM_ADDENDUM : '');
           if (mt4Two.snapshots?.length) mt4ContextUsed = mt4Two;
           twoUser =
             buildUserPrompt({ balance, risk, session, labels, pair: fixedPair || resolvedPair || p2, fundamental: fundamental.text, strict }) +
@@ -405,12 +411,15 @@ export async function POST(req) {
     const smcAnalysesForAtr = mt4ContextUsed?.smc?.analyses || [];
     const h1Atr = smcAnalysesForAtr.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14;
     const h4Atr = smcAnalysesForAtr.find((x) => x.timeframe === 'H4' && x.status === 'OK')?.atr14;
-    const marketAtr = h1Atr > 0 && h4Atr > 0 ? { h1: h1Atr, h4: h4Atr, src: `${mt4ContextUsed.source}_OHLC` } : null;
+    const m15Atr = smcAnalysesForAtr.find((x) => x.timeframe === 'M15' && x.status === 'OK')?.atr14;
+    const marketAtr = h1Atr > 0 && h4Atr > 0 ? { h1: h1Atr, h4: h4Atr, m15: m15Atr > 0 ? m15Atr : undefined, src: `${mt4ContextUsed.source}_OHLC` } : null;
 
     // Rangkaian validator: koreksi risiko -> validator zona & konflik (angka entry/SL/TP/lot tidak diubah)
     const capPerDirection = body.riskCap !== 'order'; // 'order' = batas lama (per order saja)
     const smcAnalyses = mt4ContextUsed?.snapshots?.length ? mt4ContextUsed?.smc?.analyses : null;
-    const runChecks = (rawTxt) => {
+    const runChecks = (rawIn) => {
+      const dcFix = fixDailyClose(rawIn, new Date());
+      const rawTxt = dcFix.markdown;
       let txt = rawTxt;
       let smcNotes = [];
       if (pairCfg && smcAnalyses?.length) {
@@ -426,13 +435,13 @@ export async function POST(req) {
       const last = pairCfg ? parseLastPrice(txt, pairCfg) : null;
       const atr = pairCfg && last ? (marketAtr || parseATR(txt, pairCfg, last)) : null;
       const c = pairCfg
-        ? verifyRiskTables(txt, riskUsd, pairCfg, new Date(), { last, capPerDirection })
+        ? verifyRiskTables(txt, riskUsd, pairCfg, new Date(), { last, capPerDirection, zones })
         : { markdown: txt, notes: [], fixes: [], tablesChecked: 0 };
       let md = c.markdown;
       let g = { notes: [], flags: { cancel: [], shift: [], fix: [] }, skipped: null, atr };
       if (strict && pairCfg) {
         try {
-          g = applyOrderGuard(md, { pair: pairCfg, bias: extractBias(txt), atr });
+          g = applyOrderGuard(md, { pair: pairCfg, bias: extractBias(txt), atr, zones });
           md = g.markdown;
         } catch (e) {
           console.error('[analyze] orderGuard error:', e);
@@ -440,6 +449,7 @@ export async function POST(req) {
       }
       // error yang layak generate ulang: arah entry salah (guard) + arah SL/TP salah (guard Bagian 3, riskCheck 4B)
       const fixes = [...(g.flags?.fix || []), ...(c.fixes || [])];
+      if (dcFix.notes.length) smcNotes = [...smcNotes, `🕓 ${dcFix.notes[0]}${dcFix.notes.length > 1 ? ` (+${dcFix.notes.length - 1} baris)` : ''}.`];
       if (smcNotes.length) g = { ...g, notes: [...smcNotes, ...(g.notes || [])] };
       return { checked: c, markdown: md, guard: g, fixes, last, atr };
     };
@@ -540,18 +550,26 @@ export async function POST(req) {
       notices.push('📅 Kalender memakai data tersimpan (sumber gagal diperbarui). Verifikasi jam rilis terbaru.');
     }
     if (pairCfg && lastPx) {
-      const R = zoneRange(pairCfg, lastPx, atrUsed);
+      const R3 = zones === 3 ? zoneRange3(pairCfg, lastPx, atrUsed) : null;
+      const R = R3 || zoneRange(pairCfg, lastPx, atrUsed);
       if (R) {
         const a = R.atr;
         const f = (x) => Number(x).toFixed(pairCfg.dec);
         notices.push(
-          `📏 Pedoman jarak zona dari ${f(lastPx)} (ATR H1 ${f(a.h1)} / H4 ${f(a.h4)}, sumber: ${String(a.src || '').includes('_OHLC') ? 'dihitung dari candle OHLC provider' : a.src === 'chart' ? 'dibaca dari chart' : a.src === 'campuran' ? 'sebagian dari chart' : 'profil pair (fallback)'}): Zona 1 ${rangeText(pairCfg, R.z1)}, Zona 2 ${rangeText(pairCfg, R.z2)}. Struktur tetap lebih penting daripada jarak.`
+          `📏 Pedoman jarak zona dari ${f(lastPx)} (ATR H1 ${f(a.h1)} / H4 ${f(a.h4)}, sumber: ${String(a.src || '').includes('_OHLC') ? 'dihitung dari candle OHLC provider' : a.src === 'chart' ? 'dibaca dari chart' : a.src === 'campuran' ? 'sebagian dari chart' : 'profil pair (fallback)'}): ${R3 ? `Zona 1 Scalping ${rangeText(pairCfg, R3.z1)}, Zona 2 Intraday ${rangeText(pairCfg, R3.z2)}, Zona 3 Swing ${rangeText(pairCfg, R3.z3)}` : `Zona 1 ${rangeText(pairCfg, R.z1)}, Zona 2 ${rangeText(pairCfg, R.z2)}`}. Struktur tetap lebih penting daripada jarak.`
         );
       }
     }
     if (fixes.length) notices.push(`🚫 Masih ada ${fixes.length} kesalahan arah setelah validasi — jangan pasang order yang ditandai 🚫.`);
     guard.notes.forEach((n) => notices.push(n));
-    if (notices.length) {
+    const degraded = (mt4PriceDeltaPct != null && mt4PriceDeltaPct > 0.3) || (!two && used?.model && used.model !== GEMINI_MODEL);
+    if (degraded && /Keyakinan\s*:\s*\**\s*Tinggi/i.test(markdown)) {
+      markdown = markdown.replace(/(Keyakinan\s*:\s*\**\s*)Tinggi/i, '$1Sedang');
+      notices.push('🎚 Keyakinan diturunkan ke Sedang (screenshot basi atau model cadangan).');
+    }
+    if (notices.length > 2) {
+      markdown = `> **Catatan sistem**\n${notices.map((n) => `> - ${n}`).join('\n')}\n\n` + markdown;
+    } else if (notices.length) {
       markdown = notices.map((n) => `> ${n}`).join('\n>\n') + '\n\n' + markdown;
     }
 

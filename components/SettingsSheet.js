@@ -5,7 +5,7 @@ import { THEMES } from '@/lib/themes';
 import { NAV_MODES } from '@/lib/sections';
 
 // Panel Pengaturan: bottom-sheet di HP, dialog di tablet/desktop. Berisi Tema & API Key.
-export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, onTestGateway, onLoadModels, marketSource = 'cloud', onMarketSource }) {
+export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, onTestGateway, onLoadModels, marketSource = 'cloud', onMarketSource, zoneStyle = 'two', onZoneStyle }) {
   const [showKey, setShowKey] = useState(false);
   const panelRef = useRef(null);
 
@@ -132,6 +132,33 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
               <p className="mt-1 text-[11px] leading-snug text-muted">Bila tahap 1/2 gagal, otomatis kembali ke Gemini langsung. Lebih lambat (2 panggilan).</p>
             </div>
           ) : null}
+        </section>
+
+        <section className="mb-5">
+          <h3 className="field-label">Gaya Zona</h3>
+          <div className="grid grid-cols-1 gap-2" role="radiogroup" aria-label="Gaya zona">
+            {[
+              { k: 'two', t: '2 Zona (Intraday + Swing) — bawaan', d: 'Zona 1 Intraday, Zona 2 Swing. 4 order maksimal (2 per arah).' },
+              { k: 'three', t: '3 Zona (Scalping + Intraday + Swing)', d: 'Zona 1 Scalping (dekat, 1–2 jam), Zona 2 Intraday (4–6 jam), Zona 3 Swing (sampai Daily Close). 6 order maksimal; batas risiko tetap per arah. Butuh Validator Zona AKTIF.' },
+            ].map((o) => {
+              const on = zoneStyle === o.k;
+              return (
+                <button
+                  key={o.k}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => onZoneStyle && onZoneStyle(o.k)}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition ${
+                    on ? 'border-gold bg-gold/10 ring-1 ring-gold/50' : 'border-line bg-panel2 hover:border-gold/40'
+                  }`}
+                >
+                  <span className="block text-xs font-semibold">{o.t}</span>
+                  <span className="mt-0.5 block text-[10px] leading-snug text-muted">{o.d}</span>
+                </button>
+              );
+            })}
+          </div>
         </section>
 
         <section className="mb-5">

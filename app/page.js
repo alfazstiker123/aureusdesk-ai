@@ -33,6 +33,7 @@ const LS = {
   mode: 'aureus_mode',
   gwModel: 'aureus_gwmodel',
   marketSource: 'aureus_market_source',
+  zoneStyle: 'aureus_zone_style',
 };
 
 // Format digit tombol salin harga. 'ASLI' = apa adanya dari hasil analisa (bawaan).
@@ -83,6 +84,7 @@ export default function Home() {
   const [mode, setMode] = useState('single');
   const [gwModel, setGwModel] = useState('kimi-k2.7-code-highspeed');
   const [marketSource, setMarketSource] = useState('cloud');
+  const [zoneStyle, setZoneStyle] = useState('two');
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -132,6 +134,7 @@ export default function Home() {
       if (nm && NAV_MODES.some((m) => m.key === nm)) setNavMode(nm);
       if (localStorage.getItem(LS.strict) === 'off') setStrict(false);
       if (localStorage.getItem(LS.mode) === '2stage') setMode('2stage');
+      if (localStorage.getItem(LS.zoneStyle) === 'three') setZoneStyle('three');
       const ms = localStorage.getItem(LS.marketSource);
       if (ms && ['cloud', 'mt4', 'auto', 'screenshot'].includes(ms)) setMarketSource(ms);
       const gm = localStorage.getItem(LS.gwModel);
@@ -457,7 +460,7 @@ export default function Home() {
           'Content-Type': 'application/json',
           ...(apiKey.trim() ? { 'x-gemini-key': apiKey.trim() } : {}),
         },
-        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict, mode, gwModel, marketSource }),
+        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict, mode, gwModel, marketSource, zoneStyle }),
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || 'Gagal menganalisa.');
@@ -876,6 +879,11 @@ export default function Home() {
         onTheme={(k) => {
           setTheme(k);
           persist(THEME_KEY, k);
+        }}
+        zoneStyle={zoneStyle}
+        onZoneStyle={(v) => {
+          setZoneStyle(v);
+          persist(LS.zoneStyle, v === 'three' ? 'three' : '');
         }}
         marketSource={marketSource}
         onMarketSource={(v) => {
