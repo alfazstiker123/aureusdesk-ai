@@ -152,7 +152,7 @@ export async function POST(req) {
     const pairChoice = PAIR_ID_OK(body.pair) ? body.pair : 'AUTO';
     const fixedPair = pairChoice === 'AUTO' ? null : PAIRS[pairChoice];
     const strict = body.strict !== false; // Validator Zona & Konflik Order (Pengaturan), default ON
-    const zones = strict && body.zoneStyle === 'three' ? 3 : 2; // Gaya Zona: 2 zona (lama) atau 3 zona (Scalp/Intraday/Swing)
+    const zones = body.zoneStyle === 'three' ? 3 : 2; // Gaya Zona: 2 zona (lama) atau 3 zona (Scalp/Intraday/Swing)
     const wantTwoStage = body.mode === '2stage';
     const marketSource = ['cloud', 'mt4', 'auto', 'screenshot'].includes(body.marketSource) ? body.marketSource : 'cloud';
     const gwModel = gwModelOf(body.gwModel);
@@ -534,7 +534,7 @@ export async function POST(req) {
     if (mt4Status === 'OHLC_HYBRID' && mt4PriceDeltaPct != null && mt4PriceDeltaPct > 0.3) {
       notices.push(`⏱ Screenshot kemungkinan basi: harga screenshot berbeda ${mt4PriceDeltaPct.toFixed(2)}% dari feed terbaru. Ambil screenshot ulang sebelum memasang order.`);
     }
-    if (body.zoneStyle === 'three' && !strict) notices.push('⚠️ Gaya 3 Zona butuh "Validator Zona & Konflik Order" AKTIF (Pengaturan). Saat ini dijalankan sebagai 2 zona.');
+    if (zones === 3 && !strict) notices.push('🧭 Gaya zona: 3 zona (Scalping/Intraday/Swing). ⚠️ Validator Zona MATI: zona/arah order tidak dicek server — aktifkan di Pengaturan agar order di luar OB/FVG dibatalkan.');
     else notices.push(`🧭 Gaya zona: ${zones === 3 ? '3 zona (Scalping/Intraday/Swing)' : '2 zona (Intraday/Swing) — ubah di Pengaturan → Gaya Zona'}.`);
     if (pairNote) notices.push(pairNote);
     if (autoPairNote) notices.push(autoPairNote);
