@@ -12,6 +12,7 @@ import { getMarketSnapshots, marketContext, mt4SymbolForPair } from '@/lib/mt4Ma
 import { getCloudMarketSnapshots, cloudMarketContext } from '@/lib/cloudMarket';
 import { buildSmcReport, buildZoneCandidates, buildZoneCandidates3 } from '@/lib/smc/engine';
 import { enforceSmcZones } from '@/lib/smc/guard';
+import { normalizeIdNumbers } from '@/lib/numFormat';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -417,8 +418,11 @@ export async function POST(req) {
     // Rangkaian validator: koreksi risiko -> validator zona & konflik (angka entry/SL/TP/lot tidak diubah)
     const capPerDirection = body.riskCap !== 'order'; // 'order' = batas lama (per order saja)
     const smcAnalyses = mt4ContextUsed?.snapshots?.length ? mt4ContextUsed?.smc?.analyses : null;
+    let idNumNote = '';
     const runChecks = (rawIn) => {
-      const dcFix = fixDailyClose(rawIn, new Date());
+      const idFix = pairCfg && pairCfg.priceRange?.[0] >= 500 ? normalizeIdNumbers(rawIn) : { markdown: rawIn, changed: 0 };
+      if (idFix.changed) idNumNote = `🔢 ${idFix.changed} angka berformat Indonesia (56.964,10) diubah ke format standar sebelum validasi (model cadangan mengabaikan format).`;
+      const dcFix = fixDailyClose(idFix.markdown, new Date());
       const rawTxt = dcFix.markdown;
       let txt = rawTxt;
       let smcNotes = [];
@@ -536,6 +540,7 @@ export async function POST(req) {
     }
     if (zones === 3 && !strict) notices.push('🧭 Gaya zona: 3 zona (Scalping/Intraday/Swing). ⚠️ Validator Zona MATI: zona/arah order tidak dicek server — aktifkan di Pengaturan agar order di luar OB/FVG dibatalkan.');
     else notices.push(`🧭 Gaya zona: ${zones === 3 ? '3 zona (Scalping/Intraday/Swing)' : '2 zona (Intraday/Swing) — ubah di Pengaturan → Gaya Zona'}.`);
+    if (idNumNote) notices.push(idNumNote);
     if (pairNote) notices.push(pairNote);
     if (autoPairNote) notices.push(autoPairNote);
     if (two) {
@@ -565,8 +570,8 @@ export async function POST(req) {
     if (fixes.length) notices.push(`🚫 Masih ada ${fixes.length} kesalahan arah setelah validasi — jangan pasang order yang ditandai 🚫.`);
     guard.notes.forEach((n) => notices.push(n));
     const degraded = (mt4PriceDeltaPct != null && mt4PriceDeltaPct > 0.3) || (!two && used?.model && used.model !== GEMINI_MODEL);
-    if (degraded && /Keyakinan\s*:\s*\**\s*Tinggi/i.test(markdown)) {
-      markdown = markdown.replace(/(Keyakinan\s*:\s*\**\s*)Tinggi/i, '$1Sedang');
+    if (degraded && /Keyakinan\s*:?\s*\**\s*Tinggi/i.test(markdown)) {
+      markdown = markdown.replace(/(Keyakinan\s*:?\s*\**\s*)Tinggi/i, '$1Sedang');
       notices.push('🎚 Keyakinan diturunkan ke Sedang (screenshot basi atau model cadangan).');
     }
     if (notices.length > 2) {
