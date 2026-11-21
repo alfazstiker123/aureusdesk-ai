@@ -346,6 +346,7 @@ export default function Home() {
           pair: it.pair,
         },
         thumbnails: it.thumbnails || [],
+        candles: it.candles || null,
       });
       setActiveId(it.id);
       setError('');
@@ -534,6 +535,7 @@ export default function Home() {
           risk: Number(risk),
           session,
           thumbnails: thumbs,
+          candles: data.candles || null,
         }),
       });
       const saved = await safeJson(saveRes);

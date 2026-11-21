@@ -85,3 +85,6 @@ create policy "aureus_storage_insert" on storage.objects
 
 create policy "aureus_storage_delete" on storage.objects
   for delete to anon, authenticated using (bucket_id = 'chart-screenshots');
+
+-- v3: candle untuk peta zona (opsional)
+alter table public.trading_analyses add column if not exists candles jsonb;

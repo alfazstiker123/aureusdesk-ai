@@ -73,6 +73,20 @@ export async function DELETE(req) {
   }
 }
 
+// Candle peta zona: hanya M15/H1/H4, maks 72 candle [t,o,h,l,c] berupa angka berhingga.
+function cleanCandles(c) {
+  const src = c && typeof c === 'object' ? c.bars : null;
+  if (!src || typeof src !== 'object') return null;
+  const bars = {};
+  for (const tf of ['M15', 'H1', 'H4']) {
+    const a = Array.isArray(src[tf]) ? src[tf].slice(-72) : [];
+    const ok = a.filter((b) => Array.isArray(b) && b.length === 5 && b.every((x) => Number.isFinite(Number(x)))).map((b) => b.map(Number));
+    if (ok.length) bars[tf] = ok;
+  }
+  if (!Object.keys(bars).length) return null;
+  return { source: String(c.source || '').slice(0, 20), provider: String(c.provider || '').slice(0, 60), bars };
+}
+
 function slug(s = '') {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 30) || 'chart';
 }
@@ -117,6 +131,7 @@ export async function POST(req) {
       summary_bias: body.bias || null,
       analysis_markdown: body.markdown,
       thumbnails: thumbs,
+      candles: cleanCandles(body.candles),
     };
 
     const { data, error } = await sb.from(TABLE).insert(row).select(LIST_COLUMNS).single();
