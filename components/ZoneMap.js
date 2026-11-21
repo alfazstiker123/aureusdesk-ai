@@ -23,7 +23,7 @@ function rr(ctx, x, y, w, h, r) {
 
 // Menggambar peta level (zona entry, SL, TP, harga terakhir). Hanya level dari hasil analisa;
 // tidak ada candle buatan. Label di sumbu kanan disusun agar tidak saling menimpa.
-export function drawZoneMap(canvas, W, H, dpr, { zones, price, dec, pair, bias, filter }) {
+export function drawZoneMap(canvas, W, H, dpr, { zones, price, dec, pair, bias, filter, candles = null, tfLabel = '' }) {
   canvas.width = W * dpr;
   canvas.height = H * dpr;
   const ctx = canvas.getContext('2d');
@@ -48,6 +48,8 @@ export function drawZoneMap(canvas, W, H, dpr, { zones, price, dec, pair, bias, 
     prices.push(z.low, z.high);
     [z.slVal, z.tp1Val, z.tp2Val].forEach((v) => Number.isFinite(v) && prices.push(v));
   });
+  const cs = Array.isArray(candles) ? candles.filter((c) => c.length >= 5 && c.slice(1, 5).every(Number.isFinite)) : [];
+  cs.forEach((c) => prices.push(c[2], c[3]));
   ctx.textAlign = 'left';
   if (!prices.length) {
     ctx.fillStyle = '#94A3B8';
@@ -143,6 +145,34 @@ export function drawZoneMap(canvas, W, H, dpr, { zones, price, dec, pair, bias, 
     }
   });
 
+  // Candle nyata dari data feed server (kiri); zona & garis di atasnya
+  if (cs.length) {
+    const cw = plotW * 0.56;
+    const step = cw / cs.length;
+    const bw = Math.max(2, step * 0.62);
+    cs.forEach((c, i) => {
+      const cx = padL + i * step + step / 2;
+      const up = c[4] >= c[1];
+      const col = up ? 'rgba(34,197,94,0.9)' : 'rgba(244,63,94,0.9)';
+      ctx.strokeStyle = col;
+      ctx.fillStyle = col;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx, yOf(c[2]));
+      ctx.lineTo(cx, yOf(c[3]));
+      ctx.stroke();
+      const top = yOf(Math.max(c[1], c[4]));
+      const bot = yOf(Math.min(c[1], c[4]));
+      ctx.fillRect(cx - bw / 2, top, bw, Math.max(1.2, bot - top));
+    });
+    if (tfLabel) {
+      ctx.fillStyle = 'rgba(148,163,184,0.8)';
+      ctx.font = `600 ${compact ? 8.5 : 9.5}px Inter, sans-serif`;
+      ctx.textAlign = 'left';
+      ctx.fillText(`Candle ${tfLabel} (data feed)`, padL + 4, padT + plotH - 6);
+    }
+  }
+
   // Hindari label saling menimpa
   const ph = compact ? 17 : 20;
   const gap = ph + 4;
@@ -190,10 +220,14 @@ export function drawZoneMap(canvas, W, H, dpr, { zones, price, dec, pair, bias, 
   });
 }
 
-export default function ZoneMap({ zones, price, dec = 5, pair = '', bias = '', onToast }) {
+export default function ZoneMap({ zones, price, dec = 5, pair = '', bias = '', onToast, candles = null }) {
   const wrap = useRef(null);
   const cv = useRef(null);
   const [filter, setFilter] = useState('ALL');
+  const tfs = candles?.bars ? ['M15', 'H1', 'H4'].filter((t) => candles.bars[t]?.length) : [];
+  const [tf, setTf] = useState('H1');
+  const useTf = tfs.includes(tf) ? tf : tfs[0] || '';
+  const cdl = useTf ? candles.bars[useTf].slice(-(typeof window !== 'undefined' && window.innerWidth < 480 ? 36 : 56)) : null;
   const [modalUrl, setModalUrl] = useState('');
 
   const paint = useCallback(() => {
@@ -201,8 +235,8 @@ export default function ZoneMap({ zones, price, dec = 5, pair = '', bias = '', o
     const r = wrap.current.getBoundingClientRect();
     const W = Math.max(300, Math.round(r.width));
     const H = Math.max(260, Math.round(r.height));
-    drawZoneMap(cv.current, W, H, Math.min(window.devicePixelRatio || 1, 2), { zones, price, dec, pair, bias, filter });
-  }, [zones, price, dec, pair, bias, filter]);
+    drawZoneMap(cv.current, W, H, Math.min(window.devicePixelRatio || 1, 2), { zones, price, dec, pair, bias, filter, candles: cdl, tfLabel: useTf });
+  }, [zones, price, dec, pair, bias, filter, candles, useTf]);
 
   useEffect(() => {
     paint();
@@ -214,7 +248,7 @@ export default function ZoneMap({ zones, price, dec = 5, pair = '', bias = '', o
 
   const openExport = () => {
     const off = document.createElement('canvas');
-    drawZoneMap(off, 1200, 675, 1, { zones, price, dec, pair, bias, filter });
+    drawZoneMap(off, 1200, 675, 1, { zones, price, dec, pair, bias, filter, candles: useTf ? candles.bars[useTf].slice(-64) : null, tfLabel: useTf });
     setModalUrl(off.toDataURL('image/png'));
   };
 
@@ -261,6 +295,14 @@ export default function ZoneMap({ zones, price, dec = 5, pair = '', bias = '', o
           </button>
         ))}
       </div>
+      {tfs.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] text-muted">Candle:</span>
+          {tfs.map((t) => (
+            <button key={t} type="button" onClick={() => setTf(t)} className={`tf-chip ${useTf === t ? 'active' : ''}`}>{t}</button>
+          ))}
+        </div>
+      )}
       <div ref={wrap} className="relative h-[320px] w-full overflow-hidden rounded-xl border border-line/90 bg-[#060C19] shadow-inner sm:h-[390px] lg:h-[440px]">
         <canvas ref={cv} className="block h-full w-full" />
       </div>
@@ -269,6 +311,11 @@ export default function ZoneMap({ zones, price, dec = 5, pair = '', bias = '', o
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm border border-down bg-down/40" />Zona SELL</span>
         <span className="flex items-center gap-1.5"><span className="h-[2px] w-3 bg-aurum" />Harga terakhir</span>
         <span className="flex items-center gap-1.5"><span className="h-[2px] w-3 bg-gold" />TP1</span>
+        {tfs.length > 0 ? (
+          <span className="basis-full">Candle diambil dari data feed server (bukan dari piksel screenshot) dan sudah digeser ke harga broker bila perlu.</span>
+        ) : (
+          <span className="basis-full">Tanpa candle: pair/analisa ini tidak memakai data feed server (hanya screenshot) atau dibuka dari riwayat.</span>
+        )}
       </div>
 
       {modalUrl && (

@@ -10,7 +10,7 @@ import { fixInlineTables } from '@/lib/markdownFix';
 import { resolvePair } from '@/lib/pairs';
 
 // Ringkasan (hero) + peta zona + bagian 1-4 bergaya kartu.
-export default function ResultView({ content, priceDecimals, mode, pairId, onToast }) {
+export default function ResultView({ content, priceDecimals, mode, pairId, onToast, candles = null }) {
   const [guide, setGuide] = useState(false);
   const info = useMemo(() => {
     const md = fixInlineTables(content || '');
@@ -60,7 +60,7 @@ export default function ResultView({ content, priceDecimals, mode, pairId, onToa
         </div>
       )}
 
-      <ZoneMap zones={exec} price={meta.price} dec={dec} pair={pair} bias={meta.bias} onToast={onToast} />
+      <ZoneMap zones={exec} price={meta.price} dec={dec} pair={pair} bias={meta.bias} onToast={onToast} candles={candles} />
 
       <SectionNav content={content} priceDecimals={priceDecimals} mode={mode} onGuide={() => setGuide(true)} />
 

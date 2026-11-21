@@ -114,6 +114,18 @@ ${pair ? '' : '- (Abaikan seluruh blok ini bila instrumen pada chart adalah BTC/
 === AKHIR MODE MAPPING ===`;
 }
 
+// Candle terakhir (sudah dikalibrasi ke harga broker bila proksi) untuk digambar di peta zona.
+function candlePack(ctx) {
+  const snaps = ctx?.snapshots;
+  if (!snaps?.length) return null;
+  const bars = {};
+  for (const tf of ['M15', 'H1', 'H4']) {
+    const sn = snaps.find((x) => x.timeframe === tf);
+    if (sn?.bars?.length) bars[tf] = sn.bars.slice(-72).map((b) => [b.time, b.open, b.high, b.low, b.close]);
+  }
+  return Object.keys(bars).length ? { source: ctx.source || '', provider: ctx.provider || '', bars } : null;
+}
+
 function feedPriceInfo(snapshots) {
   const q = snapshots?.find((x) => x.timeframe === 'M5') || snapshots?.find((x) => x.timeframe === 'M15');
   const bar = q?.bars?.at(-1);
@@ -686,6 +698,7 @@ export async function POST(req) {
       openaiReview: { skipped: true, reason: 'disabled_in_live_v2' },
       smcTimeframes: mt4Report?.analyses?.map((x) => x.timeframe) || [],
       marketDataSource: mt4ContextUsed?.source || 'NONE',
+      candles: candlePack(mt4ContextUsed),
       zoneRetry: retried,
       directionErrors: fixes.length,
       orderGuard: { notes: guard.notes.length, cancel: guard.flags.cancel.length, shift: guard.flags.shift.length, skipped: guard.skipped },

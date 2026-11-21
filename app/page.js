@@ -517,6 +517,7 @@ export default function Home() {
         bias: data.bias,
         meta: { created_at: createdAt, session, balance: Number(balance), risk: Number(risk), pair: data.pair || (pair !== 'AUTO' ? pair : null) },
         thumbnails: [],
+        candles: data.candles || null,
       });
       setTab('analisa');
 
@@ -587,6 +588,8 @@ export default function Home() {
           pair: pid,
           bias: meta.bias,
           filter: 'ALL',
+          candles: result.candles?.bars?.H1?.slice(-64) || null,
+          tfLabel: result.candles?.bars?.H1 ? 'H1' : '',
         });
         chartDataUrl = cv.toDataURL('image/png');
       }
@@ -946,7 +949,7 @@ export default function Home() {
                 ))}
               </div>
 
-              <ResultView content={result.markdown} priceDecimals={priceDecimals} mode={navMode} pairId={result.meta?.pair} onToast={showToast} />
+              <ResultView candles={result.candles} content={result.markdown} priceDecimals={priceDecimals} mode={navMode} pairId={result.meta?.pair} onToast={showToast} />
             </div>
           )}
 
