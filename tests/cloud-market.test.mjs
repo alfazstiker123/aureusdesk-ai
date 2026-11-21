@@ -200,3 +200,21 @@ test('EURUSD: Kraken gagal -> cadangan Binance EURUSDT', async () => {
     assert.ok(r.snapshots.find((s) => s.timeframe === 'H1').bars.length >= 35);
   } finally { globalThis.fetch = oldFetch; Date.now = oldNow; _clearCloudCache(); }
 });
+
+import { scrubBars } from '../lib/cloudMarket.js';
+test('scrubBars: wick ekstrem dipotong, candle tunggal rusak dibuang (pair sesi)', () => {
+  const tf = { seconds: 3600 };
+  const bars = Array.from({ length: 60 }, (_, i) => {
+    const o = 1.1 + (i % 2) * 0.0004;
+    return { time: i * 3600, open: o, high: o + 0.0006, low: o - 0.0006, close: o + 0.0002 };
+  });
+  bars[30] = { ...bars[30], high: 1.1872 };
+  const r = scrubBars(bars, tf, 'market');
+  assert.equal(r.clamped, 1);
+  assert.ok(Math.max(...r.bars.map((b) => b.high)) < 1.11);
+  const b2 = bars.map((b) => ({ ...b }));
+  b2[40] = { time: b2[40].time, open: 1.2, high: 1.2005, low: 1.1995, close: 1.2 };
+  const r2 = scrubBars(b2, tf, 'market');
+  assert.equal(r2.dropped, 1);
+  assert.equal(scrubBars(bars, tf, null).clamped, 0);
+});
