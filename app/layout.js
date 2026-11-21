@@ -1,9 +1,8 @@
 import './globals.css';
-import { Inter, JetBrains_Mono } from 'next/font/google';
+import { Inter } from 'next/font/google';
 import { THEME_INIT_SCRIPT } from '@/lib/themes';
 
 const inter = Inter({ subsets: ['latin'], display: 'swap', variable: '--font-inter' });
-const mono = JetBrains_Mono({ subsets: ['latin'], display: 'swap', variable: '--font-mono', weight: ['500', '600', '700'] });
 
 export const metadata = {
   title: 'AureusDesk AI — Analisa Multi-Pair & Multi-Timeframe',
@@ -25,7 +24,7 @@ export const viewport = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="id" data-theme="desk" className={`${inter.variable} ${mono.variable}`} suppressHydrationWarning>
+    <html lang="id" data-theme="desk" className={inter.variable} suppressHydrationWarning>
       <head>
         {/* terapkan tema tersimpan sebelum render agar tidak berkedip */}
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
