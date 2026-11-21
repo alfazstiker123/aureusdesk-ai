@@ -62,8 +62,8 @@ test('Kraken gagal -> cadangan Binance; pair tak didukung ditolak jelas', async 
     // cache 60 detik: panggilan kedua tidak memukul jaringan lagi
     let calls = 0; const f = globalThis.fetch; globalThis.fetch = async (...a) => { calls++; return f(...a); };
     await getCloudMarketSnapshots('BTCUSD'); assert.equal(calls, 0);
-    assert.equal(cloudSupports('XAUUSD'), false);
-    await assert.rejects(() => getCloudMarketSnapshots('XAUUSD'), /belum punya sumber data gratis/);
+    assert.equal(cloudSupports('EURUSD'), false);
+    await assert.rejects(() => getCloudMarketSnapshots('EURUSD'), /belum punya sumber data gratis/);
   } finally { globalThis.fetch = oldFetch; }
 });
 
@@ -92,4 +92,55 @@ test('MN: disusun dari candle harian Kraken, bulan tidak lengkap dan bulan berja
     const cur = new Date();
     assert.ok(lastB.getUTCFullYear() * 12 + lastB.getUTCMonth() < cur.getUTCFullYear() * 12 + cur.getUTCMonth(), 'bulan berjalan tidak boleh ikut');
   } finally { globalThis.fetch = oldFetch; }
+});
+
+test('XAUUSD via PAXG: candle akhir pekan dibuang, umur dihitung dari close Jumat, basis menggeser harga', async () => {
+  const { applyBasis, cloudProxyOf } = await import('../lib/cloudMarket.js');
+  _clearCloudCache();
+  const oldFetch = globalThis.fetch;
+  const oldNow = Date.now;
+  const NOW = Date.UTC(2026, 10, 21, 6, 30); // Sabtu 13:30 WIB, pasar emas tutup
+  Date.now = () => NOW;
+  const step = { '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400, '1w': 604800 };
+  globalThis.fetch = async (url) => {
+    const u = new URL(url);
+    assert.equal(u.hostname, 'data-api.binance.vision', 'PAXG memakai Binance lebih dulu');
+    assert.equal(u.searchParams.get('symbol'), 'PAXGUSDT');
+    const iv = u.searchParams.get('interval');
+    const now = Math.floor(NOW / 1000);
+    if (iv === '1M') {
+      const rows = Array.from({ length: 30 }, (_, i) => { const d = Date.UTC(2024, 4 + i, 1); return [d, '4000', '4100', '3900', '4050', '10']; });
+      return new Response(JSON.stringify(rows), { status: 200 });
+    }
+    const st = step[iv];
+    const n = Number(u.searchParams.get('limit'));
+    const last = Math.floor(now / st) * st;
+    const rows = Array.from({ length: n }, (_, i) => {
+      const t = last - (n - 1 - i) * st;
+      const p = 4000 + (i % 50);
+      return [t * 1000, String(p), String(p + 3), String(p - 3), String(p + 1), '5'];
+    });
+    return new Response(JSON.stringify(rows), { status: 200 });
+  };
+  try {
+    assert.equal(cloudSupports('XAUUSD'), true);
+    assert.equal(cloudProxyOf('XAUUSD'), 'PAXG');
+    const r = await getCloudMarketSnapshots('XAUUSD');
+    assert.match(r.provider, /Binance \(PAXGUSDT\)/);
+    const m5 = r.snapshots.find((s) => s.timeframe === 'M5');
+    // Jumat 20 Nov 2026 17:00 NY (EST) = 22:00 UTC -> candle M5 terakhir mulai 21:55 UTC
+    assert.equal(new Date(m5.bars.at(-1).time * 1000).toISOString(), '2026-11-20T21:55:00.000Z');
+    const d1 = r.snapshots.find((s) => s.timeframe === 'D1');
+    assert.ok(d1.bars.every((b) => ![0, 6].includes(new Date(b.time * 1000).getUTCDay())), 'D1 Sabtu/Minggu dibuang');
+    assert.ok(r.snapshots.some((s) => s.timeframe === 'MN'));
+    const ref = m5.bars.at(-1).close;
+    const b = applyBasis(r.snapshots, ref + 12.5);
+    assert.equal(b.basis.offset, 12.5);
+    assert.equal(b.snapshots.find((s) => s.timeframe === 'M5').bars.at(-1).close, ref + 12.5);
+    assert.equal(b.snapshots.find((s) => s.timeframe === 'H4').bars[0].high, r.snapshots.find((s) => s.timeframe === 'H4').bars[0].high + 12.5);
+    const bad = applyBasis(r.snapshots, ref * 1.05);
+    assert.equal(bad.basis, null);
+    assert.match(bad.note, /terlalu jauh/);
+    assert.equal(applyBasis(r.snapshots, 0).basis, null);
+  } finally { globalThis.fetch = oldFetch; Date.now = oldNow; _clearCloudCache(); }
 });

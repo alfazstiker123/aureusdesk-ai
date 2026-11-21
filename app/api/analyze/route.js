@@ -9,7 +9,8 @@ import { buildFundamentalBlock } from '@/lib/calendar';
 import { verifyRiskTables, fixDailyClose } from '@/lib/riskCheck';
 import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
 import { getMarketSnapshots, marketContext, mt4SymbolForPair } from '@/lib/mt4Market';
-import { getCloudMarketSnapshots, cloudMarketContext } from '@/lib/cloudMarket';
+import { getCloudMarketSnapshots, cloudMarketContext, cloudProxyOf, applyBasis } from '@/lib/cloudMarket';
+import { metalsWeekendClosed, nextMetalsOpenSec, fmtMt4 } from '@/lib/marketTime';
 import { buildSmcReport, buildZoneCandidates, buildZoneCandidates3 } from '@/lib/smc/engine';
 import { enforceSmcZones, syncTargets } from '@/lib/smc/guard';
 import { normalizeIdNumbers } from '@/lib/numFormat';
@@ -66,6 +67,48 @@ async function loadMt4Context(pairId, zones = 2) {
 }
 
 
+const QUOTE_SYSTEM = 'Baca dari screenshot chart MT4: (1) nama pair/instrumen pada judul chart (mis. BTCUSD, XAUUSD, EURUSD); (2) harga terakhir = label harga BID yang disorot di sumbu kanan (garis harga sekarang), BUKAN angka sumbu biasa dan BUKAN jam. Tulis harga dengan titik desimal tanpa pemisah ribuan (contoh 4065.32). Jangan menebak; kosongkan pair atau isi price 0 bila tidak terbaca.';
+const QUOTE_GEN = { temperature: 0, maxOutputTokens: 160, responseMimeType: 'application/json',
+  responseSchema: { type: 'OBJECT', properties: { pair: { type: 'STRING' }, price: { type: 'NUMBER' } }, required: ['pair', 'price'] } };
+
+/** Panggilan ringan: baca harga broker terakhir dari screenshot pertama (kalibrasi proksi). 0 bila gagal. */
+async function readChartPrice(images, apiKey, t0) {
+  const first = images?.[0];
+  if (!first) return 0;
+  const payload = {
+    systemInstruction: { parts: [{ text: QUOTE_SYSTEM }] },
+    contents: [{ role: 'user', parts: [{ text: 'Pair apa pada chart ini, dan berapa harga terakhirnya?' }, { inlineData: { mimeType: first.mimeType, data: first.data } }] }],
+    generationConfig: QUOTE_GEN,
+  };
+  for (const m of ['gemini-flash-lite-latest']) { // ringan & hemat kuota
+    if (BUDGET_MS - (Date.now() - t0) < 40_000) break;
+    try {
+      const r = await fetch(`${BASE}/${m}:generateContent`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: JSON.stringify(payload), cache: 'no-store', signal: AbortSignal.timeout(7000),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) continue;
+      const txt = (j?.candidates?.[0]?.content?.parts || []).filter((x) => !x.thought).map((x) => x.text || '').join('').trim();
+      const px = Number(JSON.parse(txt.replace(/^```(?:json)?|```$/g, '').trim())?.price) || 0;
+      if (px > 0) return px;
+    } catch { /* coba model berikutnya */ }
+  }
+  return 0;
+}
+
+/** Blok prompt "mapping akhir pekan" untuk pair yang tutup Sabtu-Minggu (emas/forex). '' bila pasar buka / 24 jam. */
+function weekendMappingBlock(pair, now = Date.now()) {
+  if (!pair || pair.open24x7 || !metalsWeekendClosed(now)) return '';
+  const open = nextMetalsOpenSec(Math.floor(now / 1000)) * 1000;
+  const openTxt = `${fmtMt4(open, 7)} WIB`;
+  return `\n\n=== MODE MAPPING AKHIR PEKAN (PASAR ${pair.id} TUTUP) ===
+- Pasar sedang tutup. Analisa ini adalah PETA untuk sesi berikutnya yang buka ${openTxt}. "Harga Terakhir" = harga close Jumat di screenshot; JANGAN sebut screenshot basi karena pasar tutup.
+- Semua order adalah Pending Order yang dipasang SETELAH pasar buka. Waktu Berakhir dihitung dari jam buka ${openTxt} (bukan dari jam sekarang): Zona Scalping = buka + 2 jam, Zona Intraday = buka + 6 jam, Zona Swing = Daily Close hari berikutnya. Semua Waktu Berakhir wajib SETELAH ${openTxt}.
+- Wajib sebut risiko GAP pembukaan: bila harga buka melompat melewati/menembus zona, order zona itu batal (jangan dikejar). Sarankan menunggu 15-30 menit setelah buka sebelum memasang order Scalping.
+=== AKHIR MODE MAPPING ===`;
+}
+
 function feedPriceInfo(snapshots) {
   const q = snapshots?.find((x) => x.timeframe === 'M5') || snapshots?.find((x) => x.timeframe === 'M15');
   const bar = q?.bars?.at(-1);
@@ -91,11 +134,11 @@ function zoneCandidateData(smc, profile, price, zones = 2) {
   } catch { return { text: '', res: null }; }
 }
 
-async function loadMarketContext(pairId, sourceMode = 'cloud', zones = 2) {
+async function loadMarketContext(pairId, sourceMode = 'cloud', zones = 2, opts = {}) {
   if (!pairId || sourceMode === 'screenshot') return { text: '', snapshots: [], smc: null, source: 'SCREENSHOT' };
   if (sourceMode === 'mt4') return loadMt4Context(pairId, zones);
   if (sourceMode === 'auto') {
-    const cloud = await loadMarketContext(pairId, 'cloud', zones);
+    const cloud = await loadMarketContext(pairId, 'cloud', zones, opts);
     if (cloud.snapshots?.length) return cloud;
     const mt4 = await loadMt4Context(pairId, zones);
     if (mt4.snapshots?.length) return mt4;
@@ -103,8 +146,22 @@ async function loadMarketContext(pairId, sourceMode = 'cloud', zones = 2) {
   }
   try {
     const result = await getCloudMarketSnapshots(pairId);
-    const snapshots = result.snapshots;
+    let snapshots = result.snapshots;
     const profile = PAIRS[pairId] || resolvePair(pairId);
+    // Proksi (PAXG untuk XAUUSD): geser seluruh candle ke harga broker yang terbaca dari screenshot.
+    let proxyLine = '';
+    let proxyNote = '';
+    if (result.proxy) {
+      const b = applyBasis(snapshots, opts.brokerPrice, { dec: profile?.dec ?? 2 });
+      snapshots = b.snapshots;
+      if (b.basis) {
+        proxyLine = `\n\nCATATAN PROKSI: candle berasal dari ${result.proxy} (token emas) dan SUDAH digeser ${b.basis.offset >= 0 ? '+' : ''}${b.basis.offset} agar sama dengan harga broker di screenshot (${b.basis.broker}). Semua level di data ini sudah dalam harga broker. Candle saat pasar emas tutup (akhir pekan/jeda harian) sudah dibuang.`;
+        proxyNote = `🪙 Data ${pairId} memakai proksi ${result.proxy} (${result.provider}) yang digeser ${b.basis.offset >= 0 ? '+' : ''}${b.basis.offset} ke harga broker ${b.basis.broker} (PAXG ${b.basis.ref}). Selisih broker vs PAXG bisa berubah beberapa dolar; cocokkan level dengan chart MT4.`;
+      } else {
+        proxyLine = `\n\nCATATAN PROKSI: candle berasal dari ${result.proxy} (token emas), TIDAK dikalibrasi ke broker (${b.note}). Harga PAXG bisa selisih beberapa dolar dari XAUUSD broker.`;
+        proxyNote = `⚠️ Data ${pairId} memakai proksi ${result.proxy} TANPA kalibrasi (${b.note}). Level zona dalam harga PAXG: geser manual sebesar selisih harga broker − PAXG sebelum memasang order.`;
+      }
+    }
     const quoteSnap = snapshots.find((x) => x.timeframe === 'M5') || snapshots.find((x) => x.timeframe === 'M15');
     const quotePrice = Number(quoteSnap?.bars?.at(-1)?.close || 0);
     if (quotePrice && profile?.priceRange && (quotePrice < profile.priceRange[0] || quotePrice > profile.priceRange[1]))
@@ -115,7 +172,7 @@ async function loadMarketContext(pairId, sourceMode = 'cloud', zones = 2) {
     const feed = feedPriceInfo(snapshots);
     const zcd = zoneCandidateData(smc, profile, feed.price || quotePrice, zones);
     const zc = zcd.text;
-    return { text: cloudMarketContext(snapshots, result.warnings, result.provider) + report + feed.line + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, zoneRes: zcd.res, feedPrice: feed.price, snapshots, smc, source: 'CLOUD', provider: result.provider, warnings: result.warnings };
+    return { text: cloudMarketContext(snapshots, result.warnings, result.provider) + proxyLine + report + feed.line + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, zoneRes: zcd.res, feedPrice: feed.price, snapshots, smc, source: 'CLOUD', provider: result.provider, warnings: result.warnings, proxyNote };
   } catch (e) {
     return { text: `DATA OHLC CLOUD TIDAK TERSEDIA/VALID (${String(e.message || e).slice(0, 220)}). Gunakan screenshot saja dan jangan klaim konfirmasi OHLC.`, snapshots: [], smc: null, source: 'NONE', error: String(e.message || e) };
   }
@@ -192,6 +249,7 @@ export async function POST(req) {
     const riskUsd = ((Number(balance) || 0) * (Number(risk) || 0)) / 100;
     let resolvedPair = fixedPair;
     let autoPairNote = '';
+    let chartPrice = 0; // harga broker terakhir dari screenshot (untuk kalibrasi proksi PAXG)
 
     // AUTO + Gemini langsung: ekstrak pair secara ringan terlebih dahulu agar Cloud OHLC
     // dapat dimuat sebelum analisa final. Jika ekstraksi gagal, V1 screenshot-flow tetap berjalan.
@@ -200,10 +258,9 @@ export async function POST(req) {
         // Ringan: hanya gambar pertama + skema kecil (pair saja), dengan model cadangan.
         const first = images[0];
         const pairPayload = {
-          systemInstruction: { parts: [{ text: 'Baca nama pair/instrumen pada judul chart MT4 (mis. BTCUSD, XAUUSD, EURUSD). Jangan menebak; kosongkan bila tidak terbaca.' }] },
-          contents: [{ role: 'user', parts: [{ text: 'Pair apa pada chart ini?' }, { inlineData: { mimeType: first.mimeType, data: first.data } }] }],
-          generationConfig: { temperature: 0, maxOutputTokens: 120, responseMimeType: 'application/json',
-            responseSchema: { type: 'OBJECT', properties: { pair: { type: 'STRING' } }, required: ['pair'] } },
+          systemInstruction: { parts: [{ text: QUOTE_SYSTEM }] },
+          contents: [{ role: 'user', parts: [{ text: 'Pair apa pada chart ini, dan berapa harga terakhirnya?' }, { inlineData: { mimeType: first.mimeType, data: first.data } }] }],
+          generationConfig: QUOTE_GEN,
         };
         let pairText = '';
         for (const m of [GEMINI_MODEL, 'gemini-flash-latest', 'gemini-flash-lite-latest']) {
@@ -220,7 +277,11 @@ export async function POST(req) {
           } catch { /* coba model berikutnya */ }
         }
         if (pairText) {
-          try { resolvedPair = resolvePair(JSON.parse(pairText.replace(/^```(?:json)?|```$/g, '').trim())?.pair); } catch { resolvedPair = null; }
+          try {
+            const q = JSON.parse(pairText.replace(/^```(?:json)?|```$/g, '').trim());
+            resolvedPair = resolvePair(q?.pair);
+            chartPrice = Number(q?.price) || 0;
+          } catch { resolvedPair = null; }
         }
         if (!resolvedPair) autoPairNote = 'Pair AUTO tidak terbaca dari screenshot; analisis berjalan tanpa OHLC Cloud. Pilih pair manual di Pengaturan agar data candle dipakai.';
       } catch (e) {
@@ -234,10 +295,16 @@ export async function POST(req) {
       offline: true,
     }));
 
-    const marketInitial = resolvedPair ? await loadMarketContext(resolvedPair.id, marketSource, zones) : { text: '', snapshots: [], smc: null, source: 'NONE' };
+    if (resolvedPair && !chartPrice && !wantTwoStage && marketSource !== 'screenshot' && marketSource !== 'mt4' && cloudProxyOf(resolvedPair.id)) {
+      chartPrice = await readChartPrice(images, apiKey, t0).catch(() => 0);
+    }
+    const sane = (px, p) => (px > 0 && (!p?.priceRange || (px >= p.priceRange[0] && px <= p.priceRange[1])) ? px : 0);
+    chartPrice = sane(chartPrice, resolvedPair);
+    const marketInitial = resolvedPair ? await loadMarketContext(resolvedPair.id, marketSource, zones, { brokerPrice: chartPrice }) : { text: '', snapshots: [], smc: null, source: 'NONE' };
     let mt4ContextUsed = marketInitial;
+    const weekendMap = weekendMappingBlock(resolvedPair || fixedPair);
     const parts = [{ text: buildUserPrompt({ balance, risk, session, labels, pair: resolvedPair || fixedPair, fundamental: fundamental.text, strict }) +
-      (marketInitial.text ? `\n\n${marketInitial.text}` : '') }];
+      weekendMap + (marketInitial.text ? `\n\n${marketInitial.text}` : '') }];
     images.forEach((img, i) => {
       parts.push({ text: `Gambar ${i + 1} — ${labels[i]}` });
       parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
@@ -322,12 +389,12 @@ export async function POST(req) {
           if (!data) throw new Error('ekstraksi gagal');
           const p2 = fixedPair || resolvedPair || resolvePair(data.pair) || (data.lastPrice ? guessPairByPrice(data.lastPrice) : null);
           const built = buildCandidates(data, p2);
-          const mt4Two = await loadMarketContext((fixedPair || p2)?.id, marketSource, zones);
+          const mt4Two = await loadMarketContext((fixedPair || p2)?.id, marketSource, zones, { brokerPrice: Number(data.lastPrice) || chartPrice });
           twoSystem = buildSystemInstruction(fixedPair || resolvedPair || p2, strict) + (zones === 3 ? zoneStyleAddendum(fixedPair || resolvedPair || p2) : '') + '\n' + STAGE2_ADDENDUM + (mt4Two.snapshots?.length ? SMC_SYSTEM_ADDENDUM : '');
           if (mt4Two.snapshots?.length) mt4ContextUsed = mt4Two;
           twoUser =
             buildUserPrompt({ balance, risk, session, labels, pair: fixedPair || resolvedPair || p2, fundamental: fundamental.text, strict }) +
-            '\n\n' + formatDataBlock(data, p2, built) + (mt4Two.text ? `\n\n${mt4Two.text}` : '');
+            weekendMappingBlock(fixedPair || resolvedPair || p2) + '\n\n' + formatDataBlock(data, p2, built) + (mt4Two.text ? `\n\n${mt4Two.text}` : '');
           const left2 = BUDGET_MS - (Date.now() - t0);
           const g = await gatewayChat({ model: gwModel, system: twoSystem, user: twoUser, timeoutMs: left2 - 2_000 });
           log.push(`tahap2 ${gwModel}: ${g.ok ? 'ok ' + g.ms + 'ms' : g.error}`);
@@ -550,6 +617,8 @@ export async function POST(req) {
     }
     if (zones === 3 && !strict) notices.push('🧭 Gaya zona: 3 zona (Scalping/Intraday/Swing). ⚠️ Validator Zona MATI: zona/arah order tidak dicek server — aktifkan di Pengaturan agar order di luar OB/FVG dibatalkan.');
     else notices.push(`🧭 Gaya zona: ${zones === 3 ? '3 zona (Scalping/Intraday/Swing)' : '2 zona (Intraday/Swing) — ubah di Pengaturan → Gaya Zona'}.`);
+    if (mt4ContextUsed?.proxyNote) notices.push(mt4ContextUsed.proxyNote);
+    if (weekendMap) notices.push(`🗓️ Pasar ${(resolvedPair || fixedPair)?.id} sedang tutup akhir pekan: ini MAPPING untuk pembukaan ${fmtMt4(nextMetalsOpenSec(Math.floor(Date.now() / 1000)) * 1000, 7)} WIB. Harga Terakhir = close Jumat; cek gap pembukaan sebelum memasang order.`);
     if (idNumNote) notices.push(idNumNote);
     if (pairNote) notices.push(pairNote);
     if (autoPairNote) notices.push(autoPairNote);
