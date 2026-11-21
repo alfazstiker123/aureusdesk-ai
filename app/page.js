@@ -9,6 +9,7 @@ import SettingsSheet from '@/components/SettingsSheet';
 import ResultView from '@/components/ResultView';
 import PairPicker, { QuickPairs, pairLabel } from '@/components/PairPicker';
 import { CandleGuideModal } from '@/components/CandleSvg';
+import ChatBox from '@/components/ChatBox';
 import { NAV_KEY, NAV_DEFAULT, NAV_MODES } from '@/lib/sections';
 import { compressImage, makeThumbnail, formatKB } from '@/lib/imageCompress';
 import { PAIR_OPTIONS, resolvePair } from '@/lib/pairs';
@@ -142,6 +143,7 @@ export default function Home() {
   const [toast, setToast] = useState('');
   const [pairOpen, setPairOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const [clock, setClock] = useState(null);
   const resultRef = useRef(null);
   const imagesRef = useRef(images);
@@ -1003,6 +1005,17 @@ export default function Home() {
         onClose={() => setPairOpen(false)}
       />
       <CandleGuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
+      <ChatBox
+        apiFetch={apiFetch}
+        apiKey={apiKey}
+        context={result?.markdown || ''}
+        pair={result?.meta?.pair || (pair !== 'AUTO' ? pair : '')}
+        balance={balance}
+        risk={risk}
+        gwModel={gwModel}
+        open={chatOpen}
+        onToggle={() => setChatOpen((o) => !o)}
+      />
 
       {toast && (
         <div
