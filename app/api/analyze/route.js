@@ -10,7 +10,7 @@ import { verifyRiskTables } from '@/lib/riskCheck';
 import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
 import { getMarketSnapshots, marketContext, mt4SymbolForPair } from '@/lib/mt4Market';
 import { getCloudMarketSnapshots, cloudMarketContext } from '@/lib/cloudMarket';
-import { buildSmcReport } from '@/lib/smc/engine';
+import { buildSmcReport, buildZoneCandidates } from '@/lib/smc/engine';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -50,10 +50,21 @@ async function loadMt4Context(pairId) {
     const byTf = Object.fromEntries(snapshots.map((x) => [x.timeframe, x.bars]));
     const smc = buildSmcReport(byTf);
     const report = smc?.analyses?.length ? `\n\nRINGKASAN SMC DETERMINISTIK (hasil kalkulasi candle tertutup; bukti, bukan sinyal otomatis):\n${smc.promptBlock}` : '';
-    return { text: marketContext(snapshots) + report, snapshots, smc, source: 'MT4_EA', warnings: [] };
+    const zc = zoneCandidateText(smc, profile, quotePrice);
+    return { text: marketContext(snapshots) + report + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, snapshots, smc, source: 'MT4_EA', warnings: [] };
   } catch (e) {
     return { text: `DATA OHLC MT4 tidak dapat diverifikasi (${e.message}).`, snapshots: [], smc: null, source: 'NONE', error: e.message };
   }
+}
+
+
+function zoneCandidateText(smc, profile, price) {
+  try {
+    const h1 = smc?.analyses?.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14;
+    const h4 = smc?.analyses?.find((x) => x.timeframe === 'H4' && x.status === 'OK')?.atr14;
+    const R = zoneRange(profile, price, h1 > 0 && h4 > 0 ? { h1, h4, src: 'OHLC' } : null);
+    return buildZoneCandidates(smc?.analyses, price, R, h1 || 0)?.text || '';
+  } catch { return ''; }
 }
 
 async function loadMarketContext(pairId, sourceMode = 'cloud') {
@@ -77,7 +88,8 @@ async function loadMarketContext(pairId, sourceMode = 'cloud') {
     const byTf = Object.fromEntries(snapshots.map((x) => [x.timeframe, x.bars]));
     const smc = buildSmcReport(byTf);
     const report = smc?.analyses?.length ? `\n\nRINGKASAN SMC DETERMINISTIK DARI CLOUD (candle tertutup; bukan sinyal otomatis):\n${smc.promptBlock}` : '';
-    return { text: cloudMarketContext(snapshots, result.warnings, result.provider) + report, snapshots, smc, source: 'CLOUD', provider: result.provider, warnings: result.warnings };
+    const zc = zoneCandidateText(smc, profile, quotePrice);
+    return { text: cloudMarketContext(snapshots, result.warnings, result.provider) + report + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, snapshots, smc, source: 'CLOUD', provider: result.provider, warnings: result.warnings };
   } catch (e) {
     return { text: `DATA OHLC CLOUD TIDAK TERSEDIA/VALID (${String(e.message || e).slice(0, 220)}). Gunakan screenshot saja dan jangan klaim konfirmasi OHLC.`, snapshots: [], smc: null, source: 'NONE', error: String(e.message || e) };
   }
@@ -475,7 +487,7 @@ export async function POST(req) {
     const notices = [];
     if (mt4Status === 'OHLC_HYBRID' && mt4Report?.analyses?.length) {
       notices.push(`📡 Data Hybrid aktif: OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'Cloud' : 'MT4 EA'} diterima dan lolos pemeriksaan. SMC dihitung deterministik dari candle tertutup; bukan probabilitas profit.`);
-      markdown = `> 📡 **V2 — OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'CLOUD' : 'MT4'} + SMC**\n> Sumber: ${mt4ContextUsed.source === 'CLOUD' ? `${mt4ContextUsed.provider || 'Cloud'} (feed exchange publik, bukan broker Anda)` : 'MT4 EA'}. Cocokkan harga dengan chart broker sebelum menggunakan level.\n\n${mt4Report.compactBlock}\n\n---\n\n${markdown}\n\n---\n\n### Lampiran: Detail SMC dari candle (referensi)\n\n\`\`\`text\n${mt4Report.promptBlock}\n\`\`\``;
+      markdown = `> 📡 **V2 — OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'CLOUD' : 'MT4'} + SMC**\n> Sumber: ${mt4ContextUsed.source === 'CLOUD' ? `${mt4ContextUsed.provider || 'Cloud'} (feed exchange publik, bukan broker Anda)` : 'MT4 EA'}. Cocokkan harga dengan chart broker sebelum menggunakan level.\n\n${mt4Report.compactBlock}\n\n---\n\n${markdown}\n\n---\n\n### Lampiran: Detail SMC dari candle (referensi)\n\n\`\`\`text\n${mt4ContextUsed.zoneCandidates ? mt4ContextUsed.zoneCandidates + '\n\n' : ''}${mt4Report.promptBlock}\n\`\`\``;
     } else if (mt4Status === 'PRICE_MISMATCH') {
       notices.push(`🚫 PRICE MISMATCH: harga screenshot dan feed pasar berbeda ${mt4PriceDeltaPct?.toFixed(2)}%. Jangan gunakan level entry dari analisa ini sebelum simbol/instrumen, waktu screenshot, dan chart diperiksa ulang.`);
     } else if (pairCfg) {
