@@ -28,6 +28,8 @@ const ATTEMPTS = [{ model: GEMINI_MODEL }, ...GEMINI_FALLBACK_MODELS.map((model)
 
 const SMC_SYSTEM_ADDENDUM = `
 ATURAN V2 SMC — PRIORITAS SAAT OHLC CLOUD/MT4 TERSEDIA:
+- FORMAT ANGKA WAJIB: semua harga ditulis dengan titik sebagai desimal dan TANPA pemisah ribuan, contoh 56964.10 (bukan 56.964,10 dan bukan 56,964.10). Level Kunci/zona/SL/TP hanya boleh angka dari blok SMC/KANDIDAT; jangan menulis harga close atau angka sumbu chart sebagai level.
+- Jangan menyalin angka atau tanda baca ke tabel dengan gabungan (mis. "57,740.000,60,500"); satu sel = satu angka atau satu rentang "A - B".
 - Jangan memaksakan empat pending order BUY/SELL jika struktur tidak membuktikan zona yang layak. Boleh tulis NO TRADE / WAIT untuk arah tanpa bukti.
 - Zona entry harus berakar pada OB atau FVG yang fresh dan terkait displacement/BOS; tandai POI, trigger konfirmasi, dan entry sebagai tiga hal berbeda.
 - BOS/CHoCH hanya valid dari candle tertutup; candle berjalan tidak boleh menjadi konfirmasi.
