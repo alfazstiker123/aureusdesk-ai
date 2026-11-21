@@ -11,7 +11,7 @@ import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
 import { getMarketSnapshots, marketContext, mt4SymbolForPair } from '@/lib/mt4Market';
 import { getCloudMarketSnapshots, cloudMarketContext } from '@/lib/cloudMarket';
 import { buildSmcReport, buildZoneCandidates, buildZoneCandidates3 } from '@/lib/smc/engine';
-import { enforceSmcZones } from '@/lib/smc/guard';
+import { enforceSmcZones, syncTargets } from '@/lib/smc/guard';
 import { normalizeIdNumbers } from '@/lib/numFormat';
 
 export const runtime = 'nodejs';
@@ -434,6 +434,10 @@ export async function POST(req) {
           const e = enforceSmcZones(rawTxt, { analyses: smcAnalyses, atrH1: smcAnalyses.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14 || 0, price: feedPx || parseLastPrice(rawTxt, pairCfg) || 0, priceRe: pairCfg.priceRe });
           txt = e.markdown;
           smcNotes = e.notes;
+          const atrH1v = smcAnalyses.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14 || 0;
+          const tpFix = syncTargets(txt, { analyses: smcAnalyses, atrH1: atrH1v, price: feedPx || parseLastPrice(rawTxt, pairCfg) || 0, priceRe: pairCfg.priceRe });
+          txt = tpFix.markdown;
+          smcNotes = [...smcNotes, ...tpFix.notes];
         } catch (err) {
           console.error('[analyze] smcGuard error:', err);
         }

@@ -41,3 +41,38 @@ test('kandidat: tanpa zona raksasa, Z1 dekat, Buy kosong', () => {
   assert.equal(r.res.BUY.z1, null);
   assert.match(r.text, /BUY: WAIT/);
 });
+
+import { syncTargets } from '../lib/smc/guard.js';
+import { buildSmcReport } from '../lib/smc/engine.js';
+
+test('syncTargets: TP1 yang hampir di harga diganti (R:R >= 1.5), entry/SL tetap', () => {
+  const md = [
+    '| Zona & Strategi | Zona Entry | Stop Loss (SL) | Take Profit 1 (TP1) | Take Profit 2 (TP2) | Syarat |',
+    '|---|---|---|---|---|---|',
+    '| SELL Zona 2 - Intraday | 56964.10 - 57691.60 | 58031.10 | 56000.00 | 55000.00 | x |',
+    '',
+    '| Order | Harga Entry | Stop Loss | Take Profit | Jarak SL | Lot Aman | Risiko ($) | R:R | Waktu |',
+    '|---|---|---|---|---|---|---|---|---|',
+    '| Sell Limit Zona 2 | 56964.10 | 58031.10 | 56000.00 | 1067.00 | 0.01 | $10.67 | 1:0.90 | x |',
+  ].join('\n');
+  const analyses = [{ status: 'OK', timeframe: 'H1', zones: [], supports: [{ price: 52000 }], resistances: [] }];
+  const r = syncTargets(md, { analyses, atrH1: 970, price: 56009, priceRe: /\d+(?:\.\d+)?/ });
+  assert.ok(r.markdown.includes('58031.10'));
+  assert.ok(!r.markdown.includes('| 56000.00 |'));
+  const tp = Number(r.markdown.split('\n')[6].split('|')[4]);
+  assert.ok(56964.1 - tp >= 1.5 * 1066.99, `TP ${tp}`);
+  assert.equal(r.notes.length, 1);
+});
+
+test('engine: MN dianalisis dan support swing utuh terdeteksi', () => {
+  const bars = [];
+  let t = 1_600_000_000;
+  const path = [10, 12, 15, 13, 11, 14, 18, 22, 19, 16, 20, 25, 30, 27, 23, 26, 33, 38, 34, 29, 24, 28, 31, 26, 22];
+  path.forEach((p, i) => { bars.push({ time: t + i * 2_592_000, open: p, high: p + 2, low: p - 2, close: p + (i % 2 ? 1 : -1) }); });
+  const rep = buildSmcReport({ MN: bars });
+  const mn = rep.analyses.find((a) => a.timeframe === 'MN');
+  assert.equal(mn.status, 'OK');
+  assert.ok(Array.isArray(mn.supports));
+  assert.ok(mn.supports.every((s) => s.price < mn.lastPrice));
+  assert.match(rep.compactBlock, /Support swing utuh/);
+});

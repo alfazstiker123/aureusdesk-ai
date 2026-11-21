@@ -66,3 +66,30 @@ test('Kraken gagal -> cadangan Binance; pair tak didukung ditolak jelas', async 
     await assert.rejects(() => getCloudMarketSnapshots('XAUUSD'), /belum punya sumber data gratis/);
   } finally { globalThis.fetch = oldFetch; }
 });
+
+test('MN: disusun dari candle harian Kraken, bulan tidak lengkap dan bulan berjalan dibuang', async () => {
+  const oldFetch = globalThis.fetch;
+  const now = Math.floor(Date.now() / 1000);
+  globalThis.fetch = async (url) => {
+    const u = new URL(url);
+    if (u.hostname !== 'api.kraken.com') return new Response('x', { status: 500 });
+    const min = Number(u.searchParams.get('interval'));
+    const step = intervals[min];
+    const last = Math.floor(now / step) * step;
+    const n = min === 1440 ? 720 : 60;
+    const rows = Array.from({ length: n }, (_, i) => { const t = last - (n - 1 - i) * step, p = 50000 + i * 3; return [t, String(p), String(p + 20), String(p - 20), String(p + 10), String(p), '1.5', 10]; });
+    return new Response(JSON.stringify({ error: [], result: { XXBTZUSD: rows, last: now } }), { status: 200 });
+  };
+  try {
+    _clearCloudCache();
+    const r = await getCloudMarketSnapshots('BTCUSD');
+    const mn = r.snapshots.find((s) => s.timeframe === 'MN');
+    assert.ok(mn, 'MN harus ada');
+    assert.ok(mn.bars.length >= 18 && mn.bars.length <= 24);
+    const d = (t) => new Date(t * 1000);
+    for (const b of mn.bars) assert.equal(d(b.time).getUTCDate(), 1);
+    const lastB = d(mn.bars.at(-1).time);
+    const cur = new Date();
+    assert.ok(lastB.getUTCFullYear() * 12 + lastB.getUTCMonth() < cur.getUTCFullYear() * 12 + cur.getUTCMonth(), 'bulan berjalan tidak boleh ikut');
+  } finally { globalThis.fetch = oldFetch; }
+});
