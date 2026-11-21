@@ -84,7 +84,15 @@ function cleanCandles(c) {
     if (ok.length) bars[tf] = ok;
   }
   if (!Object.keys(bars).length) return null;
-  return { source: String(c.source || '').slice(0, 20), provider: String(c.provider || '').slice(0, 60), bars };
+  const events = {};
+  for (const tf of Object.keys(bars)) {
+    const ev = Array.isArray(c.events?.[tf]) ? c.events[tf].slice(-6) : [];
+    const ok = ev
+      .filter((e) => Array.isArray(e) && e.length === 4 && ['BOS', 'CHoCH'].includes(e[0]) && ['BULLISH', 'BEARISH'].includes(e[1]) && Number.isFinite(Number(e[2])) && Number.isFinite(Number(e[3])))
+      .map((e) => [e[0], e[1], Number(e[2]), Number(e[3])]);
+    if (ok.length) events[tf] = ok;
+  }
+  return { source: String(c.source || '').slice(0, 20), provider: String(c.provider || '').slice(0, 60), bars, events };
 }
 
 function slug(s = '') {

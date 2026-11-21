@@ -21,9 +21,21 @@ function rr(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+// EMA dihitung dari close candle feed (bukan data buatan).
+export function emaSeries(closes, period = 20) {
+  const k = 2 / (period + 1);
+  const out = [];
+  let prev = null;
+  for (const c of closes) {
+    prev = prev === null ? c : c * k + prev * (1 - k);
+    out.push(prev);
+  }
+  return out;
+}
+
 // Menggambar peta level (zona entry, SL, TP, harga terakhir). Hanya level dari hasil analisa;
 // tidak ada candle buatan. Label di sumbu kanan disusun agar tidak saling menimpa.
-export function drawZoneMap(canvas, W, H, dpr, { zones, price, dec, pair, bias, filter, candles = null, tfLabel = '' }) {
+export function drawZoneMap(canvas, W, H, dpr, { zones, price, dec, pair, bias, filter, candles = null, tfLabel = '', ema = null, events = null }) {
   canvas.width = W * dpr;
   canvas.height = H * dpr;
   const ctx = canvas.getContext('2d');
@@ -173,6 +185,90 @@ export function drawZoneMap(canvas, W, H, dpr, { zones, price, dec, pair, bias, 
     }
   }
 
+  const cwAll = plotW * 0.56;
+
+  // EMA 20 dari close candle feed
+  if (cs.length && Array.isArray(ema) && ema.length === cs.length && cs.length > 3) {
+    const step = cwAll / cs.length;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(192,132,252,0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ema.forEach((v, i) => {
+      const x = padL + i * step + step / 2;
+      if (i === 0) ctx.moveTo(x, yOf(v));
+      else ctx.lineTo(x, yOf(v));
+    });
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // BOS / CHoCH asli dari mesin SMC (garis pendek di candle yang menembus level)
+  if (cs.length && Array.isArray(events) && events.length) {
+    const step = cwAll / cs.length;
+    const t0 = cs[0][0];
+    const tN = cs[cs.length - 1][0];
+    const span = cs.length > 1 ? (tN - t0) / (cs.length - 1) : 0;
+    events.forEach(([type, dir, level, time]) => {
+      if (!(level >= minP && level <= maxP) || !(span > 0) || time < t0 - span / 2 || time > tN + span / 2) return;
+      const idx = Math.max(0, Math.min(cs.length - 1, Math.round((time - t0) / span)));
+      const x1 = padL + idx * step;
+      const x2 = Math.min(padL + cwAll, x1 + step * 9);
+      const y = yOf(level);
+      const col = type === 'CHoCH' ? '#FBBF24' : 'rgba(203,213,225,0.8)';
+      ctx.save();
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x1, y);
+      ctx.lineTo(x2, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = col;
+      ctx.font = `800 ${compact ? 8 : 9}px Inter, sans-serif`;
+      ctx.textAlign = 'left';
+      ctx.fillText(`${type} ${dir === 'BULLISH' ? '▲' : '▼'}`, x1 + 2, y + (dir === 'BULLISH' ? 10 : -4));
+      ctx.restore();
+    });
+  }
+
+  // Kotak R:R zona utama: dihitung dari level entry (tengah zona), SL, dan TP pada tabel; ini bukan prediksi harga
+  if (cs.length && act[0]) {
+    const z = act[0];
+    const entry = (z.low + z.high) / 2;
+    const tp = Number.isFinite(z.tp2Val) ? z.tp2Val : z.tp1Val;
+    const bx = padL + cwAll + 6;
+    const bw2 = padL + plotW - bx - 2;
+    if (bw2 > 30) {
+      const ye = yOf(entry);
+      if (Number.isFinite(z.slVal)) {
+        ctx.fillStyle = 'rgba(244,63,94,0.13)';
+        const ys = yOf(z.slVal);
+        ctx.fillRect(bx, Math.min(ye, ys), bw2, Math.abs(ys - ye));
+      }
+      if (Number.isFinite(tp)) {
+        ctx.fillStyle = 'rgba(34,197,94,0.12)';
+        const yt = yOf(tp);
+        ctx.fillRect(bx, Math.min(ye, yt), bw2, Math.abs(yt - ye));
+      }
+      ctx.strokeStyle = 'rgba(248,250,252,0.55)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(bx, ye);
+      ctx.lineTo(bx + bw2, ye);
+      ctx.stroke();
+      if (Number.isFinite(z.slVal) && Number.isFinite(tp) && Math.abs(entry - z.slVal) > 0) {
+        const r = Math.abs(tp - entry) / Math.abs(entry - z.slVal);
+        ctx.fillStyle = '#F8FAFC';
+        ctx.font = `800 ${compact ? 9 : 10.5}px Inter, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(`R:R 1:${r.toFixed(2)}`, bx + bw2 / 2, ye + (z.side === 'BUY' ? 14 : -6));
+        ctx.textAlign = 'left';
+      }
+    }
+  }
+
   // Hindari label saling menimpa
   const ph = compact ? 17 : 20;
   const gap = ph + 4;
@@ -227,7 +323,10 @@ export default function ZoneMap({ zones, price, dec = 5, pair = '', bias = '', o
   const tfs = candles?.bars ? ['M15', 'H1', 'H4'].filter((t) => candles.bars[t]?.length) : [];
   const [tf, setTf] = useState('H1');
   const useTf = tfs.includes(tf) ? tf : tfs[0] || '';
-  const cdl = useTf ? candles.bars[useTf].slice(-(typeof window !== 'undefined' && window.innerWidth < 480 ? 36 : 56)) : null;
+  const nShow = typeof window !== 'undefined' && window.innerWidth < 480 ? 36 : 56;
+  const cdl = useTf ? candles.bars[useTf].slice(-nShow) : null;
+  const emaOf = (n) => (useTf ? emaSeries(candles.bars[useTf].map((b) => b[4])).slice(-n) : null);
+  const evs = useTf ? candles?.events?.[useTf] || null : null;
   const [modalUrl, setModalUrl] = useState('');
 
   const paint = useCallback(() => {
@@ -235,7 +334,7 @@ export default function ZoneMap({ zones, price, dec = 5, pair = '', bias = '', o
     const r = wrap.current.getBoundingClientRect();
     const W = Math.max(300, Math.round(r.width));
     const H = Math.max(260, Math.round(r.height));
-    drawZoneMap(cv.current, W, H, Math.min(window.devicePixelRatio || 1, 2), { zones, price, dec, pair, bias, filter, candles: cdl, tfLabel: useTf });
+    drawZoneMap(cv.current, W, H, Math.min(window.devicePixelRatio || 1, 2), { zones, price, dec, pair, bias, filter, candles: cdl, tfLabel: useTf, ema: emaOf(nShow), events: evs });
   }, [zones, price, dec, pair, bias, filter, candles, useTf]);
 
   useEffect(() => {
@@ -248,7 +347,7 @@ export default function ZoneMap({ zones, price, dec = 5, pair = '', bias = '', o
 
   const openExport = () => {
     const off = document.createElement('canvas');
-    drawZoneMap(off, 1200, 675, 1, { zones, price, dec, pair, bias, filter, candles: useTf ? candles.bars[useTf].slice(-64) : null, tfLabel: useTf });
+    drawZoneMap(off, 1200, 675, 1, { zones, price, dec, pair, bias, filter, candles: useTf ? candles.bars[useTf].slice(-64) : null, tfLabel: useTf, ema: emaOf(64), events: evs });
     setModalUrl(off.toDataURL('image/png'));
   };
 
@@ -311,8 +410,10 @@ export default function ZoneMap({ zones, price, dec = 5, pair = '', bias = '', o
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm border border-down bg-down/40" />Zona SELL</span>
         <span className="flex items-center gap-1.5"><span className="h-[2px] w-3 bg-aurum" />Harga terakhir</span>
         <span className="flex items-center gap-1.5"><span className="h-[2px] w-3 bg-gold" />TP1</span>
+        {tfs.length > 0 && <span className="flex items-center gap-1.5"><span className="h-[2px] w-3" style={{ background: '#C084FC' }} />EMA 20</span>}
+        {tfs.length > 0 && <span className="flex items-center gap-1.5"><span className="h-[2px] w-3 border-t border-dashed" style={{ borderColor: '#FBBF24' }} />BOS / CHoCH</span>}
         {tfs.length > 0 ? (
-          <span className="basis-full">Candle diambil dari data feed server (bukan dari piksel screenshot) dan sudah digeser ke harga broker bila perlu.</span>
+          <span className="basis-full">Candle, EMA 20, dan BOS/CHoCH berasal dari data feed server (bukan dari piksel screenshot). Kotak R:R dihitung dari entry (tengah zona), SL, dan TP di tabel, bukan prediksi harga.</span>
         ) : (
           <span className="basis-full">Tanpa candle: pair/analisa ini tidak memakai data feed server (hanya screenshot) atau dibuka dari riwayat.</span>
         )}

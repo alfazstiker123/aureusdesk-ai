@@ -123,7 +123,15 @@ function candlePack(ctx) {
     const sn = snaps.find((x) => x.timeframe === tf);
     if (sn?.bars?.length) bars[tf] = sn.bars.slice(-72).map((b) => [b.time, b.open, b.high, b.low, b.close]);
   }
-  return Object.keys(bars).length ? { source: ctx.source || '', provider: ctx.provider || '', bars } : null;
+  // Event BOS/CHoCH asli dari mesin SMC (candle tertutup), per TF: [type, direction, level, time]
+  const events = {};
+  for (const tf of Object.keys(bars)) {
+    const a = ctx.smc?.analyses?.find((x) => x.timeframe === tf && x.status === 'OK');
+    const first = bars[tf][0]?.[0];
+    const evs = (a?.structureEvents || []).filter((e) => Number.isFinite(Number(e.level)) && Number(e.time) >= Number(first)).slice(-6);
+    if (evs.length) events[tf] = evs.map((e) => [e.type, e.direction, Number(e.level), Number(e.time)]);
+  }
+  return Object.keys(bars).length ? { source: ctx.source || '', provider: ctx.provider || '', bars, events } : null;
 }
 
 function feedPriceInfo(snapshots) {
