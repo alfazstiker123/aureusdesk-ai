@@ -170,7 +170,7 @@ async function loadMarketContext(pairId, sourceMode = 'cloud', zones = 2, opts =
     if (quotePrice && profile?.priceRange && (quotePrice < profile.priceRange[0] || quotePrice > profile.priceRange[1]))
       throw new Error(`Harga Cloud ${quotePrice} di luar rentang profil ${pairId}; periksa CLOUD_SYMBOL_MAP.`);
     const byTf = Object.fromEntries(snapshots.map((x) => [x.timeframe, x.bars]));
-    const smc = buildSmcReport(byTf);
+    const smc = buildSmcReport(byTf, { minFvgAtr: result.proxy === 'FX' ? 0.25 : 0.08 }); // forex: FVG mikro dari last-trade = noise
     const report = smc?.analyses?.length ? `\n\nRINGKASAN SMC DETERMINISTIK DARI CLOUD (candle tertutup; bukan sinyal otomatis):\n${smc.promptBlock}` : '';
     const feed = feedPriceInfo(snapshots);
     const zcd = zoneCandidateData(smc, profile, feed.price || quotePrice, zones);

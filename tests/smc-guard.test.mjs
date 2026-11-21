@@ -141,3 +141,15 @@ test('fixWeekendExpiry: order akhir pekan digeser ke sesi buka Senin (Scalping +
   assert.equal(fixWeekendExpiry(ok, sat, { id: 'EURUSD' }).changed, 2);
   assert.ok(dailyCloseAfter(Date.UTC(2026, 10, 23, 6, 0)) === Date.UTC(2026, 10, 23, 22, 0));
 });
+
+test('buildSmcReport: minFvgAtr membuang FVG mikro (forex)', () => {
+  const bars = Array.from({ length: 60 }, (_, i) => {
+    const o = 1.1 - i * 0.0003;
+    return { time: 1700000000 + i * 300, open: o, high: o + 0.0004, low: o - 0.0004, close: o - 0.0002 };
+  });
+  bars[40] = { ...bars[40], high: bars[41].low - 0.00001 + 0 }; // celah sangat tipis
+  const a = buildSmcReport({ M5: bars }, { minFvgAtr: 0.08 }).analyses.find((x) => x.timeframe === 'M5');
+  const b = buildSmcReport({ M5: bars }, { minFvgAtr: 5 }).analyses.find((x) => x.timeframe === 'M5');
+  assert.ok(b.zones.filter((z) => z.source === 'FVG').length === 0);
+  assert.ok(a.zones.filter((z) => z.source === 'FVG').length >= b.zones.filter((z) => z.source === 'FVG').length);
+});

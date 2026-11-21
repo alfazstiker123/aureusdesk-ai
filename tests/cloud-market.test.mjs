@@ -218,3 +218,24 @@ test('scrubBars: wick ekstrem dipotong, candle tunggal rusak dibuang (pair sesi)
   assert.equal(r2.dropped, 1);
   assert.equal(scrubBars(bars, tf, null).clamped, 0);
 });
+
+import { weeklyFromDaily } from '../lib/cloudMarket.js';
+test('weeklyFromDaily: minggu Senin-Jumat, minggu berjalan ikut bila Jumat sudah tutup', () => {
+  const mon = Date.UTC(2026, 10, 9) / 1000; // Senin 9 Nov 2026
+  const daily = [];
+  for (let w = 0; w < 2; w++) for (let d = 0; d < 5; d++) daily.push({ time: mon + (w * 7 + d) * 86400, open: 1.1 + w, high: 1.2 + w + d * 0.001, low: 1.0 + w, close: 1.1 + w + d * 0.01, volume: 1 });
+  const sat = Date.UTC(2026, 10, 21, 8) / 1000; // Sabtu 21 Nov: Jumat (20 Nov) sudah tutup
+  const r = weeklyFromDaily(daily, sat);
+  assert.equal(r.length, 2);
+  assert.equal(r[1].time, mon + 7 * 86400);
+  assert.equal(r[1].close, 2.1 + 0.04);
+  assert.equal(weeklyFromDaily(daily, mon + 7 * 86400 + 3 * 86400).length, 1); // Rabu minggu ke-2: belum tutup
+});
+test('scrubBars: D1 wick 5x median dipotong, MN tidak disentuh', () => {
+  const bars = Array.from({ length: 40 }, (_, i) => ({ time: i * 86400, open: 1.1, high: 1.106, low: 1.094, close: 1.102 }));
+  bars[20] = { ...bars[20], low: 0.99 };
+  const r = scrubBars(bars, { key: 'D1', seconds: 86400 }, 'market');
+  assert.equal(r.clamped, 1);
+  assert.ok(Math.min(...r.bars.map((b) => b.low)) > 1.07);
+  assert.equal(scrubBars(bars, { key: 'MN', seconds: 2592000 }, 'market').clamped, 0);
+});
