@@ -534,6 +534,8 @@ export async function POST(req) {
     if (mt4Status === 'OHLC_HYBRID' && mt4PriceDeltaPct != null && mt4PriceDeltaPct > 0.3) {
       notices.push(`⏱ Screenshot kemungkinan basi: harga screenshot berbeda ${mt4PriceDeltaPct.toFixed(2)}% dari feed terbaru. Ambil screenshot ulang sebelum memasang order.`);
     }
+    if (body.zoneStyle === 'three' && !strict) notices.push('⚠️ Gaya 3 Zona butuh "Validator Zona & Konflik Order" AKTIF (Pengaturan). Saat ini dijalankan sebagai 2 zona.');
+    else notices.push(`🧭 Gaya zona: ${zones === 3 ? '3 zona (Scalping/Intraday/Swing)' : '2 zona (Intraday/Swing) — ubah di Pengaturan → Gaya Zona'}.`);
     if (pairNote) notices.push(pairNote);
     if (autoPairNote) notices.push(autoPairNote);
     if (two) {
