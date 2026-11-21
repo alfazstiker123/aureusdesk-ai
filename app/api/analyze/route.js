@@ -10,10 +10,11 @@ import { verifyRiskTables, fixDailyClose } from '@/lib/riskCheck';
 import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
 import { getMarketSnapshots, marketContext, mt4SymbolForPair } from '@/lib/mt4Market';
 import { getCloudMarketSnapshots, cloudMarketContext, cloudProxyOf, applyBasis } from '@/lib/cloudMarket';
-import { metalsWeekendClosed, nextMetalsOpenSec, fmtMt4 } from '@/lib/marketTime';
+import { metalsWeekendClosed, fmtMt4 } from '@/lib/marketTime';
 import { buildSmcReport, buildZoneCandidates, buildZoneCandidates3 } from '@/lib/smc/engine';
 import { enforceSmcZones, syncTargets } from '@/lib/smc/guard';
 import { normalizeIdNumbers } from '@/lib/numFormat';
+import { fixWeekendExpiry, nextOpenMs } from '@/lib/weekendExpiry';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -99,12 +100,14 @@ async function readChartPrice(images, apiKey, t0) {
 
 /** Blok prompt "mapping akhir pekan" untuk pair yang tutup Sabtu-Minggu (emas/forex). '' bila pasar buka / 24 jam. */
 function weekendMappingBlock(pair, now = Date.now()) {
-  if (!pair || pair.open24x7 || !metalsWeekendClosed(now)) return '';
-  const open = nextMetalsOpenSec(Math.floor(now / 1000)) * 1000;
+  if (pair?.open24x7 || !metalsWeekendClosed(now)) return '';
+  const label = pair?.id || 'FOREX/EMAS';
+  const open = nextOpenMs(pair, now);
   const openTxt = `sekitar ${fmtMt4(open, 7)} WIB`; // jam buka tepat tergantung broker (forex 17:00 NY, emas CME 18:00 NY)
-  return `\n\n=== MODE MAPPING AKHIR PEKAN (PASAR ${pair.id} TUTUP) ===
-- Pasar sedang tutup. Analisa ini adalah PETA untuk sesi berikutnya yang buka ${openTxt}. "Harga Terakhir" = harga close Jumat di screenshot; JANGAN sebut screenshot basi karena pasar tutup.
+  return `\n\n=== MODE MAPPING AKHIR PEKAN (PASAR ${label} TUTUP) ===
+${pair ? '' : '- (Abaikan seluruh blok ini bila instrumen pada chart adalah BTC/kripto: pasar kripto buka 24 jam.)\n'}- Pasar sedang tutup. Analisa ini adalah PETA untuk sesi berikutnya yang buka ${openTxt}. "Harga Terakhir" = harga close Jumat di screenshot; JANGAN sebut screenshot basi karena pasar tutup.
 - Semua order adalah Pending Order yang dipasang SETELAH pasar buka. Waktu Berakhir dihitung dari jam buka ${openTxt} (bukan dari jam sekarang): zona jangka pendek (Scalping) = buka + 2 jam, Intraday = buka + 6 jam, Swing = Daily Close hari berikutnya (sesuaikan dengan gaya zona aktif). Semua Waktu Berakhir wajib SETELAH ${openTxt}.
+- Jadwal berita: tulis event pada hari buka berikutnya (Senin) dan Selasa dari data kalender, BUKAN event hari ini; tulis "Hindari trading" untuk jendela rilis di sesi buka tersebut.
 - Wajib sebut risiko GAP pembukaan: bila harga buka melompat melewati/menembus zona, order zona itu batal (jangan dikejar). Sarankan menunggu 15-30 menit setelah buka sebelum memasang order Scalping.
 === AKHIR MODE MAPPING ===`;
 }
@@ -255,35 +258,34 @@ export async function POST(req) {
     // dapat dimuat sebelum analisa final. Jika ekstraksi gagal, V1 screenshot-flow tetap berjalan.
     if (!resolvedPair && !wantTwoStage && marketSource !== 'screenshot') {
       try {
-        // Ringan: hanya gambar pertama + skema kecil (pair saja), dengan model cadangan.
-        const first = images[0];
-        const pairPayload = {
-          systemInstruction: { parts: [{ text: QUOTE_SYSTEM }] },
-          contents: [{ role: 'user', parts: [{ text: 'Pair apa pada chart ini, dan berapa harga terakhirnya?' }, { inlineData: { mimeType: first.mimeType, data: first.data } }] }],
-          generationConfig: QUOTE_GEN,
-        };
-        let pairText = '';
-        for (const m of [GEMINI_MODEL, 'gemini-flash-latest', 'gemini-flash-lite-latest']) {
-          if (BUDGET_MS - (Date.now() - t0) < 40_000) break;
-          try {
-            const exRes = await fetch(`${BASE}/${m}:generateContent`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-              body: JSON.stringify(pairPayload), cache: 'no-store', signal: AbortSignal.timeout(7000),
-            });
-            const exJson = await exRes.json().catch(() => ({}));
-            if (!exRes.ok) continue;
-            pairText = (exJson?.candidates?.[0]?.content?.parts || []).filter((x) => !x.thought).map((x) => x.text || '').join('').trim();
-            if (pairText) break;
-          } catch { /* coba model berikutnya */ }
+        // Ringan: satu gambar + skema kecil (pair + harga). Flash-lite dulu (hemat kuota), lalu model utama; gambar pertama lalu terakhir.
+        const tries = [images[0], ...(images.length > 1 ? [images[images.length - 1]] : [])];
+        const why = [];
+        for (const img of tries) {
+          const pairPayload = {
+            systemInstruction: { parts: [{ text: QUOTE_SYSTEM }] },
+            contents: [{ role: 'user', parts: [{ text: 'Pair apa pada chart ini, dan berapa harga terakhirnya?' }, { inlineData: { mimeType: img.mimeType, data: img.data } }] }],
+            generationConfig: QUOTE_GEN,
+          };
+          for (const m of ['gemini-flash-lite-latest', GEMINI_MODEL]) {
+            if (BUDGET_MS - (Date.now() - t0) < 40_000) { why.push('waktu habis'); break; }
+            try {
+              const exRes = await fetch(`${BASE}/${m}:generateContent`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+                body: JSON.stringify(pairPayload), cache: 'no-store', signal: AbortSignal.timeout(12000),
+              });
+              const exJson = await exRes.json().catch(() => ({}));
+              if (!exRes.ok) { why.push(`${m.replace('gemini-', '').replace('-latest', '')} HTTP ${exRes.status}`); continue; }
+              const txt = (exJson?.candidates?.[0]?.content?.parts || []).filter((x) => !x.thought).map((x) => x.text || '').join('').trim();
+              const q = JSON.parse(txt.replace(/^```(?:json)?|```$/g, '').trim());
+              const rp = resolvePair(q?.pair);
+              if (rp) { resolvedPair = rp; chartPrice = Number(q?.price) || 0; break; }
+              why.push(`${m.replace('gemini-', '').replace('-latest', '')} pair kosong`);
+            } catch (e) { why.push(`${m.replace('gemini-', '').replace('-latest', '')} ${e?.name === 'TimeoutError' ? 'timeout' : 'respons tak terbaca'}`); }
+          }
+          if (resolvedPair) break;
         }
-        if (pairText) {
-          try {
-            const q = JSON.parse(pairText.replace(/^```(?:json)?|```$/g, '').trim());
-            resolvedPair = resolvePair(q?.pair);
-            chartPrice = Number(q?.price) || 0;
-          } catch { resolvedPair = null; }
-        }
-        if (!resolvedPair) autoPairNote = 'Pair AUTO tidak terbaca dari screenshot; analisis berjalan tanpa OHLC Cloud. Pilih pair manual di Pengaturan agar data candle dipakai.';
+        if (!resolvedPair) autoPairNote = `Pair AUTO tidak terbaca dari screenshot (${why.slice(0, 4).join('; ') || 'tanpa detail'}); analisis berjalan tanpa OHLC Cloud. Pilih pair manual di Pengaturan agar data candle dipakai.`;
       } catch (e) {
         autoPairNote = 'Ekstraksi pair AUTO gagal; analisis berjalan dengan screenshot saja. Pilih pair manual agar data candle dipakai.';
       }
@@ -496,7 +498,8 @@ export async function POST(req) {
       const idFix = pairCfg && pairCfg.priceRange?.[0] >= 500 ? normalizeIdNumbers(rawIn) : { markdown: rawIn, changed: 0 };
       if (idFix.changed) idNumNote = `🔢 ${idFix.changed} angka berformat Indonesia (56.964,10) diubah ke format standar sebelum validasi (model cadangan mengabaikan format).`;
       const dcFix = fixDailyClose(idFix.markdown, new Date());
-      const rawTxt = dcFix.markdown;
+      const wkFix = fixWeekendExpiry(dcFix.markdown, new Date(), pairCfg);
+      const rawTxt = wkFix.markdown;
       let txt = rawTxt;
       let smcNotes = [];
       if (pairCfg && smcAnalyses?.length) {
@@ -530,6 +533,7 @@ export async function POST(req) {
       }
       // error yang layak generate ulang: arah entry salah (guard) + arah SL/TP salah (guard Bagian 3, riskCheck 4B)
       const fixes = [...(g.flags?.fix || []), ...(c.fixes || [])];
+      if (wkFix.notes.length) smcNotes = [...smcNotes, `🗓️ ${wkFix.notes[0]}`];
       if (dcFix.notes.length) smcNotes = [...smcNotes, `🕓 ${dcFix.notes[0]}${dcFix.notes.length > 1 ? ` (+${dcFix.notes.length - 1} baris)` : ''}.`];
       if (smcNotes.length) g = { ...g, notes: [...smcNotes, ...(g.notes || [])] };
       return { checked: c, markdown: md, guard: g, fixes, last, atr };
@@ -618,7 +622,7 @@ export async function POST(req) {
     if (zones === 3 && !strict) notices.push('🧭 Gaya zona: 3 zona (Scalping/Intraday/Swing). ⚠️ Validator Zona MATI: zona/arah order tidak dicek server — aktifkan di Pengaturan agar order di luar OB/FVG dibatalkan.');
     else notices.push(`🧭 Gaya zona: ${zones === 3 ? '3 zona (Scalping/Intraday/Swing)' : '2 zona (Intraday/Swing) — ubah di Pengaturan → Gaya Zona'}.`);
     if (mt4ContextUsed?.proxyNote) notices.push(mt4ContextUsed.proxyNote);
-    if (weekendMap) notices.push(`🗓️ Pasar ${(resolvedPair || fixedPair)?.id} sedang tutup akhir pekan: ini MAPPING untuk pembukaan ${fmtMt4(nextMetalsOpenSec(Math.floor(Date.now() / 1000)) * 1000, 7)} WIB. Harga Terakhir = close Jumat; cek gap pembukaan sebelum memasang order.`);
+    if (weekendMap && !pairCfg?.open24x7) notices.push(`🗓️ Pasar ${(resolvedPair || fixedPair)?.id || pairCfg?.id || 'forex/emas'} sedang tutup akhir pekan: ini MAPPING untuk pembukaan ${fmtMt4(nextOpenMs(pairCfg || resolvedPair || fixedPair, Date.now()), 7)} WIB. Harga Terakhir = close Jumat; cek gap pembukaan sebelum memasang order.`);
     if (idNumNote) notices.push(idNumNote);
     if (pairNote) notices.push(pairNote);
     if (autoPairNote) notices.push(autoPairNote);

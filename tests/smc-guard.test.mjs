@@ -109,3 +109,35 @@ test('priceDec: BTC 1, emas 2, JPY 3, forex 5 (pembulatan tidak membuang digit)'
   assert.equal(priceDec(1.08123), 5);
   assert.equal(roundTo(155.4326, priceDec(155.4)), 155.433);
 });
+
+test('fixWeekendExpiry: order akhir pekan digeser ke sesi buka Senin (Scalping +2j, Intraday +6j, Swing = Daily Close)', async () => {
+  const { fixWeekendExpiry, dailyCloseAfter } = await import('../lib/weekendExpiry.js');
+  const md = [
+    '> - ⏳ Masa Berlaku Sinyal: Zona 1 (Scalping) valid hingga 16:19 WIB; Zona 3 (Swing) hingga Daily Close Minggu 05:00 WIB',
+    '',
+    '| Order | Harga Entry | Stop Loss | Take Profit | Jarak SL | Lot Aman | Risiko ($) | R:R | Waktu Berakhir (WIB) |',
+    '|---|---|---|---|---|---|---|---|---|',
+    '| Sell Limit Zona 1 (Scalping Resistance M15) | 1.0975 | 1.0990 | 1.0945 | 0.00150 | 0.03 | $4.50 | 1:2.00 | 21 Nov 2026, 16:19 WIB |',
+    '| Sell Limit Zona 2 (Intraday Supply H1) | 1.0995 | 1.1020 | 1.0945 | 0.00250 | 0.03 | $7.50 | 1:2.00 | 21 Nov 2026, 20:19 WIB |',
+    '| Sell Limit Zona 3 (Swing Supply H4) | 1.1060 | 1.1095 | 1.0930 | 0.00350 | 0.03 | $10.50 | 1:3.71 | 22 Nov 2026, 05:00 WIB |',
+    '| Buy Limit Zona 1 (Scalping) | Tidak ada level valid (tunggu) | - | - | - | - | - | - | - |',
+  ].join('\n');
+  const sat = new Date(Date.UTC(2026, 10, 21, 7, 28)); // Sabtu 14:28 WIB
+  const r = fixWeekendExpiry(md, sat, { id: 'EURUSD' });
+  assert.equal(r.changed, 3);
+  assert.match(r.markdown, /\| 23 Nov 2026, 07\.00 WIB \|/, 'Scalping: buka forex Senin 05:00 + 2 jam');
+  assert.match(r.markdown, /\| 23 Nov 2026, 11\.00 WIB \|/, 'Intraday: buka + 6 jam');
+  assert.match(r.markdown, /\| 24 Nov 2026, 05\.00 WIB \|/, 'Swing: Daily Close Selasa 05:00 WIB');
+  assert.match(r.markdown, /MAPPING AKHIR PEKAN — pasang order setelah pasar buka 23 Nov 2026, 05\.00 WIB/);
+  const g = fixWeekendExpiry(md, sat, { id: 'XAUUSD', group: 'gold' });
+  assert.match(g.markdown, /pasar buka 23 Nov 2026, 06\.00 WIB/, 'emas CME buka 18:00 NY');
+  assert.match(g.markdown, /\| 23 Nov 2026, 08\.00 WIB \|/);
+  assert.ok(!/16:19 WIB/.test(r.markdown));
+  // BTC (24 jam) dan hari kerja tidak diubah
+  assert.equal(fixWeekendExpiry(md, sat, { id: 'BTCUSD', open24x7: true }).changed, 0);
+  assert.equal(fixWeekendExpiry(md, new Date(Date.UTC(2026, 10, 24, 7, 28)), { id: 'EURUSD' }).changed, 0);
+  // expiry yang sudah setelah buka dibiarkan
+  const ok = md.replace('21 Nov 2026, 16:19 WIB', '23 Nov 2026, 09:00 WIB');
+  assert.equal(fixWeekendExpiry(ok, sat, { id: 'EURUSD' }).changed, 2);
+  assert.ok(dailyCloseAfter(Date.UTC(2026, 10, 23, 6, 0)) === Date.UTC(2026, 10, 23, 22, 0));
+});
