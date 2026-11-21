@@ -99,3 +99,13 @@ test('zoneEntry: SL tidak tertinggal di dalam OB searah di atasnya', () => {
   const c = zoneEntry('SELL', { low: 59757.6, high: 61281.3 }, 750, 1000, [{ low: 61281.3, high: 61740.2 }, { low: 61201, high: 61913 }]);
   assert.ok(c.sl > 61913, `SL ${c.sl}`);
 });
+
+test('priceDec: BTC 1, emas 2, JPY 3, forex 5 (pembulatan tidak membuang digit)', async () => {
+  const { priceDec, roundTo } = await import('../lib/smc/fmt.js');
+  assert.equal(priceDec(56000), 1);
+  assert.equal(priceDec(3600.23), 2);
+  assert.equal(priceDec(155.432), 3);
+  assert.equal(priceDec(48.123), 3);
+  assert.equal(priceDec(1.08123), 5);
+  assert.equal(roundTo(155.4326, priceDec(155.4)), 155.433);
+});

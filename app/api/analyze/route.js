@@ -101,10 +101,10 @@ async function readChartPrice(images, apiKey, t0) {
 function weekendMappingBlock(pair, now = Date.now()) {
   if (!pair || pair.open24x7 || !metalsWeekendClosed(now)) return '';
   const open = nextMetalsOpenSec(Math.floor(now / 1000)) * 1000;
-  const openTxt = `${fmtMt4(open, 7)} WIB`;
+  const openTxt = `sekitar ${fmtMt4(open, 7)} WIB`; // jam buka tepat tergantung broker (forex 17:00 NY, emas CME 18:00 NY)
   return `\n\n=== MODE MAPPING AKHIR PEKAN (PASAR ${pair.id} TUTUP) ===
 - Pasar sedang tutup. Analisa ini adalah PETA untuk sesi berikutnya yang buka ${openTxt}. "Harga Terakhir" = harga close Jumat di screenshot; JANGAN sebut screenshot basi karena pasar tutup.
-- Semua order adalah Pending Order yang dipasang SETELAH pasar buka. Waktu Berakhir dihitung dari jam buka ${openTxt} (bukan dari jam sekarang): Zona Scalping = buka + 2 jam, Zona Intraday = buka + 6 jam, Zona Swing = Daily Close hari berikutnya. Semua Waktu Berakhir wajib SETELAH ${openTxt}.
+- Semua order adalah Pending Order yang dipasang SETELAH pasar buka. Waktu Berakhir dihitung dari jam buka ${openTxt} (bukan dari jam sekarang): zona jangka pendek (Scalping) = buka + 2 jam, Intraday = buka + 6 jam, Swing = Daily Close hari berikutnya (sesuaikan dengan gaya zona aktif). Semua Waktu Berakhir wajib SETELAH ${openTxt}.
 - Wajib sebut risiko GAP pembukaan: bila harga buka melompat melewati/menembus zona, order zona itu batal (jangan dikejar). Sarankan menunggu 15-30 menit setelah buka sebelum memasang order Scalping.
 === AKHIR MODE MAPPING ===`;
 }
@@ -152,14 +152,14 @@ async function loadMarketContext(pairId, sourceMode = 'cloud', zones = 2, opts =
     let proxyLine = '';
     let proxyNote = '';
     if (result.proxy) {
-      const b = applyBasis(snapshots, opts.brokerPrice, { dec: profile?.dec ?? 2 });
+      const b = applyBasis(snapshots, opts.brokerPrice, { dec: profile?.dec ?? 2, maxPct: result.maxBasisPct || 1.5 });
       snapshots = b.snapshots;
       if (b.basis) {
-        proxyLine = `\n\nCATATAN PROKSI: candle berasal dari ${result.proxy} (token emas) dan SUDAH digeser ${b.basis.offset >= 0 ? '+' : ''}${b.basis.offset} agar sama dengan harga broker di screenshot (${b.basis.broker}). Semua level di data ini sudah dalam harga broker. Candle saat pasar emas tutup (akhir pekan/jeda harian) sudah dibuang.`;
-        proxyNote = `🪙 Data ${pairId} memakai proksi ${result.proxy} (${result.provider}) yang digeser ${b.basis.offset >= 0 ? '+' : ''}${b.basis.offset} ke harga broker ${b.basis.broker} (PAXG ${b.basis.ref}). Selisih broker vs PAXG bisa berubah beberapa dolar; cocokkan level dengan chart MT4.`;
+        proxyLine = `\n\nCATATAN PROKSI: candle berasal dari ${result.proxyDesc || result.proxy} dan SUDAH digeser ${b.basis.offset >= 0 ? '+' : ''}${b.basis.offset} agar sama dengan harga broker di screenshot (${b.basis.broker}). Semua level di data ini sudah dalam harga broker. Candle saat pasar tutup (akhir pekan/jeda harian) sudah dibuang.`;
+        proxyNote = `🪙 Data ${pairId} dari ${result.provider} (${result.proxyDesc || result.proxy}), digeser ${b.basis.offset >= 0 ? '+' : ''}${b.basis.offset} ke harga broker ${b.basis.broker} (feed ${b.basis.ref}). Selisih broker vs feed bisa berubah; cocokkan level dengan chart MT4.`;
       } else {
-        proxyLine = `\n\nCATATAN PROKSI: candle berasal dari ${result.proxy} (token emas), TIDAK dikalibrasi ke broker (${b.note}). Harga PAXG bisa selisih beberapa dolar dari XAUUSD broker.`;
-        proxyNote = `⚠️ Data ${pairId} memakai proksi ${result.proxy} TANPA kalibrasi (${b.note}). Level zona dalam harga PAXG: geser manual sebesar selisih harga broker − PAXG sebelum memasang order.`;
+        proxyLine = `\n\nCATATAN PROKSI: candle berasal dari ${result.proxyDesc || result.proxy}, TIDAK dikalibrasi ke broker (${b.note}). Harganya bisa selisih dari harga broker.`;
+        proxyNote = `⚠️ Data ${pairId} dari ${result.provider} TANPA kalibrasi ke broker (${b.note}). Level zona dalam harga feed: geser manual sebesar selisih harga broker − feed sebelum memasang order.`;
       }
     }
     const quoteSnap = snapshots.find((x) => x.timeframe === 'M5') || snapshots.find((x) => x.timeframe === 'M15');

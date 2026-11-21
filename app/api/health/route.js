@@ -22,7 +22,7 @@ export async function GET(req) {
     gemini: null,
     calendar: null,
     gateway: null,
-    marketData: { provider: 'Kraken (cadangan: Binance market-data)', keyless: true, pairs: ['BTCUSD', 'XAUUSD (proksi PAXG)'], mode: 'cloud' },
+    marketData: { provider: 'Kraken (cadangan: Binance market-data)', keyless: true, pairs: ['BTCUSD', 'XAUUSD (proksi PAXG)', 'EURUSD', 'GBPUSD', 'USDJPY', 'EURJPY'], mode: 'cloud' },
   };
 
   try {

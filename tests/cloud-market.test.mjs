@@ -62,8 +62,8 @@ test('Kraken gagal -> cadangan Binance; pair tak didukung ditolak jelas', async 
     // cache 60 detik: panggilan kedua tidak memukul jaringan lagi
     let calls = 0; const f = globalThis.fetch; globalThis.fetch = async (...a) => { calls++; return f(...a); };
     await getCloudMarketSnapshots('BTCUSD'); assert.equal(calls, 0);
-    assert.equal(cloudSupports('EURUSD'), false);
-    await assert.rejects(() => getCloudMarketSnapshots('EURUSD'), /belum punya sumber data gratis/);
+    assert.equal(cloudSupports('AUDUSD'), false);
+    await assert.rejects(() => getCloudMarketSnapshots('AUDUSD'), /belum punya sumber data gratis/);
   } finally { globalThis.fetch = oldFetch; }
 });
 
@@ -142,5 +142,61 @@ test('XAUUSD via PAXG: candle akhir pekan dibuang, umur dihitung dari close Juma
     assert.equal(bad.basis, null);
     assert.match(bad.note, /terlalu jauh/);
     assert.equal(applyBasis(r.snapshots, 0).basis, null);
+  } finally { globalThis.fetch = oldFetch; Date.now = oldNow; _clearCloudCache(); }
+});
+
+test('Forex (USDJPY) via Kraken: akhir pekan dibuang, MN dari harian hari kerja, tanpa Binance, basis 3 desimal', async () => {
+  const { applyBasis } = await import('../lib/cloudMarket.js');
+  _clearCloudCache();
+  const oldFetch = globalThis.fetch; const oldNow = Date.now;
+  const NOW = Date.UTC(2026, 10, 21, 6, 30); // Sabtu 13:30 WIB
+  Date.now = () => NOW;
+  const now = Math.floor(NOW / 1000);
+  const hosts = new Set();
+  globalThis.fetch = async (url) => {
+    const u = new URL(url); hosts.add(u.hostname);
+    assert.equal(u.hostname, 'api.kraken.com', 'USDJPY tidak punya cadangan Binance');
+    assert.equal(u.searchParams.get('pair'), 'USDJPY');
+    const min = Number(u.searchParams.get('interval')); const st = intervals[min];
+    const n = 720; const last = Math.floor(now / st) * st;
+    const rows = Array.from({ length: n }, (_, i) => { const t = last - (n - 1 - i) * st; const p = 150 + ((i * 7) % 40) / 10; return [t, p.toFixed(3), (p + 0.05).toFixed(3), (p - 0.05).toFixed(3), (p + 0.01).toFixed(3), p.toFixed(3), '1', 5]; });
+    return new Response(JSON.stringify({ error: [], result: { USDJPY: rows, last: now } }), { status: 200 });
+  };
+  try {
+    const r = await getCloudMarketSnapshots('USDJPY');
+    assert.equal(r.proxy, 'FX');
+    assert.ok(!hosts.has('data-api.binance.vision'));
+    const m5 = r.snapshots.find((s) => s.timeframe === 'M5');
+    assert.equal(new Date(m5.bars.at(-1).time * 1000).toISOString(), '2026-11-20T21:55:00.000Z');
+    const mn = r.snapshots.find((s) => s.timeframe === 'MN');
+    assert.ok(mn && mn.bars.length >= 18, `MN dari Kraken harian: ${mn?.bars.length}`);
+    assert.equal(mn.source, 'KRAKEN');
+    const ref = m5.bars.at(-1).close;
+    const b = applyBasis(r.snapshots, ref + 0.042, { dec: 3, maxPct: r.maxBasisPct });
+    assert.equal(b.basis.offset, 0.042);
+    assert.equal(b.snapshots.find((s) => s.timeframe === 'M5').bars.at(-1).close, Math.round((ref + 0.042) * 1000) / 1000);
+    assert.equal(applyBasis(r.snapshots, ref * 1.02, { dec: 3, maxPct: r.maxBasisPct }).basis, null, 'selisih 2% ditolak untuk forex');
+  } finally { globalThis.fetch = oldFetch; Date.now = oldNow; _clearCloudCache(); }
+});
+
+test('EURUSD: Kraken gagal -> cadangan Binance EURUSDT', async () => {
+  _clearCloudCache();
+  const oldFetch = globalThis.fetch; const oldNow = Date.now;
+  const NOW = Date.UTC(2026, 10, 23, 12, 0); // Senin, pasar buka
+  Date.now = () => NOW; const now = Math.floor(NOW / 1000);
+  const step = { '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400, '1w': 604800 };
+  globalThis.fetch = async (url) => {
+    const u = new URL(url);
+    if (u.hostname === 'api.kraken.com') return new Response(JSON.stringify({ error: ['EQuery:Unknown asset pair'] }), { status: 200 });
+    assert.equal(u.searchParams.get('symbol'), 'EURUSDT');
+    const iv = u.searchParams.get('interval');
+    if (iv === '1M') return new Response(JSON.stringify([]), { status: 200 });
+    const st = step[iv]; const n = Number(u.searchParams.get('limit')); const last = Math.floor(now / st) * st;
+    return new Response(JSON.stringify(Array.from({ length: n }, (_, i) => { const p = 1.08 + (i % 30) / 10000; return [(last - (n - 1 - i) * st) * 1000, p.toFixed(5), (p + 0.0004).toFixed(5), (p - 0.0004).toFixed(5), (p + 0.0001).toFixed(5), '5']; })), { status: 200 });
+  };
+  try {
+    const r = await getCloudMarketSnapshots('EURUSD');
+    assert.match(r.provider, /Binance \(EURUSDT\)/);
+    assert.ok(r.snapshots.find((s) => s.timeframe === 'H1').bars.length >= 35);
   } finally { globalThis.fetch = oldFetch; Date.now = oldNow; _clearCloudCache(); }
 });
