@@ -11,6 +11,7 @@ import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
 import { getMarketSnapshots, marketContext, mt4SymbolForPair } from '@/lib/mt4Market';
 import { getCloudMarketSnapshots, cloudMarketContext } from '@/lib/cloudMarket';
 import { buildSmcReport, buildZoneCandidates } from '@/lib/smc/engine';
+import { enforceSmcZones } from '@/lib/smc/guard';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -33,6 +34,8 @@ ATURAN V2 SMC — PRIORITAS SAAT OHLC CLOUD/MT4 TERSEDIA:
 - OB yang invalidated dan FVG yang fully mitigated tidak boleh dipakai sebagai zona fresh.
 - ATR(14) H1/H4 dari OHLC adalah sumber utama untuk volatilitas; jangan menggantinya dengan tebakan atau ATR profil bila tersedia.
 - Gunakan hierarchy W1/D1 konteks, H4/H1 struktur, M15/M5 setup; timeframe rendah tidak boleh membatalkan struktur lebih tinggi tanpa CHoCH valid.
+- Kolom "Level Kunci" Bagian 2 HANYA boleh berisi level dari blok SMC (level BOS/CHoCH, tepi OB/FVG fresh, swing). DILARANG memakai angka label sumbu harga di screenshot atau harga close sebagai level.
+- Order (Bagian 3/4B) hanya boleh di dalam OB/FVG fresh searah dari blok SMC; arah tanpa zona valid = tulis "Tidak ada level valid (tunggu)" dan 4B "Tidak Ada Setup (Tunggu)". Server membatalkan order di luar zona SMC fresh.
 - Jika data OHLC tidak lengkap, stale, atau pair tidak cocok, nyatakan VISUAL ONLY — CONFIDENCE TERBATAS dan jangan klaim konfirmasi OHLC.`;
 
 async function loadMt4Context(pairId) {
@@ -50,13 +53,23 @@ async function loadMt4Context(pairId) {
     const byTf = Object.fromEntries(snapshots.map((x) => [x.timeframe, x.bars]));
     const smc = buildSmcReport(byTf);
     const report = smc?.analyses?.length ? `\n\nRINGKASAN SMC DETERMINISTIK (hasil kalkulasi candle tertutup; bukti, bukan sinyal otomatis):\n${smc.promptBlock}` : '';
-    const zc = zoneCandidateText(smc, profile, quotePrice);
-    return { text: marketContext(snapshots) + report + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, snapshots, smc, source: 'MT4_EA', warnings: [] };
+    const feed = feedPriceInfo(snapshots);
+    const zc = zoneCandidateText(smc, profile, feed.price || quotePrice);
+    return { text: marketContext(snapshots) + report + feed.line + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, feedPrice: feed.price, snapshots, smc, source: 'MT4_EA', warnings: [] };
   } catch (e) {
     return { text: `DATA OHLC MT4 tidak dapat diverifikasi (${e.message}).`, snapshots: [], smc: null, source: 'NONE', error: e.message };
   }
 }
 
+
+function feedPriceInfo(snapshots) {
+  const q = snapshots?.find((x) => x.timeframe === 'M5') || snapshots?.find((x) => x.timeframe === 'M15');
+  const bar = q?.bars?.at(-1);
+  const price = Number(bar?.close || 0);
+  if (!(price > 0)) return { price: 0, line: '' };
+  const wib = bar.time ? new Date((Number(bar.time) + 300) * 1000 + 7 * 3600 * 1000).toISOString().slice(11, 16) : '';
+  return { price, line: `\n\nHARGA FEED TERKINI (close candle ${q.timeframe} tertutup terakhir${wib ? `, ±${wib} WIB` : ''}): ${price}. Jika harga di screenshot berbeda >0.15% dari angka ini, screenshot basi: tulis "Harga Terakhir" = harga feed ini dan sebut singkat bahwa screenshot lebih lama.` };
+}
 
 function zoneCandidateText(smc, profile, price) {
   try {
@@ -88,8 +101,9 @@ async function loadMarketContext(pairId, sourceMode = 'cloud') {
     const byTf = Object.fromEntries(snapshots.map((x) => [x.timeframe, x.bars]));
     const smc = buildSmcReport(byTf);
     const report = smc?.analyses?.length ? `\n\nRINGKASAN SMC DETERMINISTIK DARI CLOUD (candle tertutup; bukan sinyal otomatis):\n${smc.promptBlock}` : '';
-    const zc = zoneCandidateText(smc, profile, quotePrice);
-    return { text: cloudMarketContext(snapshots, result.warnings, result.provider) + report + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, snapshots, smc, source: 'CLOUD', provider: result.provider, warnings: result.warnings };
+    const feed = feedPriceInfo(snapshots);
+    const zc = zoneCandidateText(smc, profile, feed.price || quotePrice);
+    return { text: cloudMarketContext(snapshots, result.warnings, result.provider) + report + feed.line + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, feedPrice: feed.price, snapshots, smc, source: 'CLOUD', provider: result.provider, warnings: result.warnings };
   } catch (e) {
     return { text: `DATA OHLC CLOUD TIDAK TERSEDIA/VALID (${String(e.message || e).slice(0, 220)}). Gunakan screenshot saja dan jangan klaim konfirmasi OHLC.`, snapshots: [], smc: null, source: 'NONE', error: String(e.message || e) };
   }
@@ -395,7 +409,20 @@ export async function POST(req) {
 
     // Rangkaian validator: koreksi risiko -> validator zona & konflik (angka entry/SL/TP/lot tidak diubah)
     const capPerDirection = body.riskCap !== 'order'; // 'order' = batas lama (per order saja)
-    const runChecks = (txt) => {
+    const smcAnalyses = mt4ContextUsed?.snapshots?.length ? mt4ContextUsed?.smc?.analyses : null;
+    const runChecks = (rawTxt) => {
+      let txt = rawTxt;
+      let smcNotes = [];
+      if (pairCfg && smcAnalyses?.length) {
+        try {
+          const feedPx = Number(mt4ContextUsed.feedPrice || 0);
+          const e = enforceSmcZones(rawTxt, { analyses: smcAnalyses, atrH1: smcAnalyses.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14 || 0, price: feedPx || parseLastPrice(rawTxt, pairCfg) || 0, priceRe: pairCfg.priceRe });
+          txt = e.markdown;
+          smcNotes = e.notes;
+        } catch (err) {
+          console.error('[analyze] smcGuard error:', err);
+        }
+      }
       const last = pairCfg ? parseLastPrice(txt, pairCfg) : null;
       const atr = pairCfg && last ? (marketAtr || parseATR(txt, pairCfg, last)) : null;
       const c = pairCfg
@@ -413,6 +440,7 @@ export async function POST(req) {
       }
       // error yang layak generate ulang: arah entry salah (guard) + arah SL/TP salah (guard Bagian 3, riskCheck 4B)
       const fixes = [...(g.flags?.fix || []), ...(c.fixes || [])];
+      if (smcNotes.length) g = { ...g, notes: [...smcNotes, ...(g.notes || [])] };
       return { checked: c, markdown: md, guard: g, fixes, last, atr };
     };
     let { checked, markdown, guard, fixes, last: lastPx, atr: atrUsed } = runChecks(text);
@@ -492,6 +520,9 @@ export async function POST(req) {
       notices.push(`🚫 PRICE MISMATCH: harga screenshot dan feed pasar berbeda ${mt4PriceDeltaPct?.toFixed(2)}%. Jangan gunakan level entry dari analisa ini sebelum simbol/instrumen, waktu screenshot, dan chart diperiksa ulang.`);
     } else if (pairCfg) {
       if (marketSource !== 'screenshot') notices.push(`⚠️ Analisis berjalan tanpa OHLC Cloud/MT4${mt4ContextUsed?.error ? `: ${mt4ContextUsed.error}` : ''}. Hasil ini SCREENSHOT ONLY; jangan anggap SMC terkonfirmasi dari candle.`);
+    }
+    if (mt4Status === 'OHLC_HYBRID' && mt4PriceDeltaPct != null && mt4PriceDeltaPct > 0.3) {
+      notices.push(`⏱ Screenshot kemungkinan basi: harga screenshot berbeda ${mt4PriceDeltaPct.toFixed(2)}% dari feed terbaru. Ambil screenshot ulang sebelum memasang order.`);
     }
     if (pairNote) notices.push(pairNote);
     if (autoPairNote) notices.push(autoPairNote);
