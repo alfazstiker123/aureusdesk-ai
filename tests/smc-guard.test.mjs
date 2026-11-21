@@ -95,3 +95,7 @@ test('zoneEntry: zona lebar -> entry mulai 50%, SL di luar zona + zona tetangga 
   const b = zoneEntry('BUY', { low: 100, high: 110 }, 50, 20);
   assert.equal(b.entryLo, 100); assert.ok(b.sl < 100);
 });
+test('zoneEntry: SL tidak tertinggal di dalam OB searah di atasnya', () => {
+  const c = zoneEntry('SELL', { low: 59757.6, high: 61281.3 }, 750, 1000, [{ low: 61281.3, high: 61740.2 }, { low: 61201, high: 61913 }]);
+  assert.ok(c.sl > 61913, `SL ${c.sl}`);
+});
