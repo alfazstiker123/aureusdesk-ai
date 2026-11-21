@@ -10,6 +10,10 @@ import ResultView from '@/components/ResultView';
 import PairPicker, { QuickPairs, pairLabel } from '@/components/PairPicker';
 import { CandleGuideModal } from '@/components/CandleSvg';
 import ChatBox from '@/components/ChatBox';
+import { drawZoneMap } from '@/components/ZoneMap';
+import { buildPdf, loadJsPdf } from '@/lib/pdfReport';
+import { segmentSection, parseMeta } from '@/lib/zoneParse';
+import { fixInlineTables } from '@/lib/markdownFix';
 import { NAV_KEY, NAV_DEFAULT, NAV_MODES } from '@/lib/sections';
 import { compressImage, makeThumbnail, formatKB } from '@/lib/imageCompress';
 import { PAIR_OPTIONS, resolvePair } from '@/lib/pairs';
@@ -144,6 +148,7 @@ export default function Home() {
   const [pairOpen, setPairOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const [clock, setClock] = useState(null);
   const resultRef = useRef(null);
   const imagesRef = useRef(images);
@@ -563,6 +568,44 @@ export default function Home() {
     showToast('📋 Hasil analisa disalin.');
   }
 
+  async function downloadPdf() {
+    if (!result?.markdown || pdfBusy) return;
+    setPdfBusy(true);
+    try {
+      const JsPDF = await loadJsPdf();
+      const md = fixInlineTables(result.markdown);
+      const meta = parseMeta(md);
+      const exec = segmentSection(md).find((x) => x.type === 'exec')?.rows || [];
+      let chartDataUrl = '';
+      if (exec.some((r) => r.valid)) {
+        const cv = document.createElement('canvas');
+        const pid = meta.pair || result.meta?.pair || '';
+        drawZoneMap(cv, 1200, 620, 1, {
+          zones: exec,
+          price: meta.price,
+          dec: resolvePair(pid)?.dec ?? 5,
+          pair: pid,
+          bias: meta.bias,
+          filter: 'ALL',
+        });
+        chartDataUrl = cv.toDataURL('image/png');
+      }
+      const { doc, filename } = buildPdf(JsPDF, {
+        markdown: result.markdown,
+        pair: result.meta?.pair || '',
+        createdAt: result.meta?.created_at || '',
+        chartDataUrl,
+        maxRiskUsd: (((Number(result.meta?.balance) || 0) * (Number(result.meta?.risk) || 0)) / 100).toFixed(2),
+      });
+      doc.save(filename);
+      showToast('📄 PDF diunduh.');
+    } catch (e) {
+      showToast(`Gagal membuat PDF: ${e?.message || e}`);
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+
   // Digit desimal untuk tombol salin harga (null = apa adanya)
   const fmtDef = COPY_FORMATS.find((f) => f.key === copyFmt);
   const priceDecimals =
@@ -864,7 +907,10 @@ export default function Home() {
                 </div>
                 <div className="flex flex-wrap gap-2 print:hidden">
                   <button type="button" onClick={copyResult} className="btn-ghost text-xs">📋 Copy Hasil Analisa</button>
-                  <button type="button" onClick={() => window.print()} className="btn-ghost text-xs">🖨️ Print / Save PDF</button>
+                  <button type="button" onClick={downloadPdf} disabled={pdfBusy} className="btn-gold text-xs">
+                    {pdfBusy ? '⏳ Menyusun PDF...' : '📄 Unduh PDF'}
+                  </button>
+                  <button type="button" onClick={() => window.print()} className="btn-ghost text-xs">🖨️ Print</button>
                 </div>
               </div>
 
