@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
-import { GEMINI_MODEL, buildSystemInstruction, buildUserPrompt, extractBias } from '@/lib/prompt';
-import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice, resolvePair } from '@/lib/pairs';
+import { GEMINI_MODEL, GEMINI_FALLBACK_MODELS, buildSystemInstruction, buildUserPrompt, extractBias } from '@/lib/prompt';
+import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice, resolvePair, parseATR, zoneRange, rangeText } from '@/lib/pairs';
 import { gatewayChat, gwConfigured, gwModelOf } from '@/lib/gateway';
 import { EXTRACT_SYSTEM, EXTRACT_SCHEMA, normalizeExtract, buildCandidates, formatDataBlock, STAGE2_ADDENDUM } from '@/lib/extract';
 import { requirePin } from '@/lib/auth';
 import { fixInlineTables } from '@/lib/markdownFix';
 import { buildFundamentalBlock } from '@/lib/calendar';
 import { verifyRiskTables } from '@/lib/riskCheck';
-import { applyOrderGuard } from '@/lib/zoneCheck';
+import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,10 +18,20 @@ const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_IMAGES = 12;
 const BUDGET_MS = 52_000; // total waktu semua percobaan (di bawah maxDuration)
 
-// Urutan percobaan (tanpa Google Search): model utama -> model cadangan.
-// (gemini-2.5-flash & gemini-2.0-flash sudah dihentikan Google -> 404, jadi tidak dipakai.)
-const FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-3.8-flash'];
-const ATTEMPTS = [{ model: GEMINI_MODEL }, ...FALLBACK_MODELS.map((model) => ({ model }))];
+// Urutan percobaan (tanpa Google Search): Flash (utama) -> cadangan -> Lite (terakhir, paling murah tapi paling lemah membaca angka).
+const ATTEMPTS = [{ model: GEMINI_MODEL }, ...GEMINI_FALLBACK_MODELS.map((model) => ({ model }))];
+
+// "Thinking" untuk penalaran struktur bertahap. GEMINI_THINKING_BUDGET=0 mematikan. Model yang menolak -> dicoba ulang tanpa thinking.
+const THINKING_BUDGET = (() => {
+  const v = Number(process.env.GEMINI_THINKING_BUDGET);
+  return Number.isFinite(v) && v >= 0 ? Math.floor(v) : 1024;
+})();
+const withThinking = (gen) => (THINKING_BUDGET > 0 ? { ...gen, thinkingConfig: { thinkingBudget: THINKING_BUDGET } } : gen);
+const stripThinking = (payload) => {
+  const { thinkingConfig, ...gen } = payload.generationConfig || {};
+  return { ...payload, generationConfig: gen };
+};
+const thinkingRejected = (status, json) => status === 400 && /thinking/i.test(json?.error?.message || '');
 
 // Error yang layak dicoba ulang dengan model/mode lain (kuota, overload, model tidak ada, tool search ditolak)
 function shouldFallback(status, json) {
@@ -94,11 +104,31 @@ export async function POST(req) {
     const basePayload = {
       systemInstruction: { parts: [{ text: buildSystemInstruction(fixedPair, strict) }] },
       contents: [{ role: 'user', parts }],
-      generationConfig: {
-        temperature: 0.3,
+      generationConfig: withThinking({
+        temperature: 0.2,
         topP: 0.9,
-        maxOutputTokens: 8192,
-      },
+        maxOutputTokens: 12288, // termasuk token thinking
+      }),
+    };
+    const noThinkModels = new Set(); // model yang menolak thinkingConfig
+    const payloadFor = (model, p) => (noThinkModels.has(model) ? stripThinking(p) : p);
+    const callGemini = async (model, p, timeoutMs) => {
+      const go = async (body) => {
+        const r = await fetch(`${BASE}/${model}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+          body: JSON.stringify(body),
+          cache: 'no-store',
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        return { r, j: await r.json().catch(() => ({})) };
+      };
+      let out = await go(payloadFor(model, p));
+      if (thinkingRejected(out.r.status, out.j) && !noThinkModels.has(model)) {
+        noThinkModels.add(model);
+        out = await go(stripThinking(p));
+      }
+      return out;
     };
 
     // ---- Mode 2 tahap (opsional): Gemini ekstrak JSON -> gateway menulis analisa ----
@@ -124,7 +154,7 @@ export async function POST(req) {
           };
           let data = null;
           let exModel = null;
-          for (const m of ['gemini-flash-latest', GEMINI_MODEL]) {
+          for (const m of [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS.slice(0, 1)]) {
             const left = BUDGET_MS - (Date.now() - t0);
             if (left < 30_000) break;
             try {
@@ -176,15 +206,8 @@ export async function POST(req) {
       if (used === null && log.length > 0 && remaining < 8_000) break; // sisa waktu terlalu sedikit
 
       try {
-        const r = await fetch(`${BASE}/${attempt.model}:generateContent`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-          body: JSON.stringify(basePayload),
-          cache: 'no-store',
-          signal: AbortSignal.timeout(Math.max(8_000, remaining)),
-        });
-        const j = await r.json().catch(() => ({}));
-        log.push(`${attempt.model}: ${r.status}`);
+        const { r, j } = await callGemini(attempt.model, basePayload, Math.max(8_000, remaining));
+        log.push(`${attempt.model}: ${r.status}${noThinkModels.has(attempt.model) ? ' (tanpa thinking)' : ''}`);
         res = r;
         json = j;
         if (r.ok) {
@@ -244,31 +267,38 @@ export async function POST(req) {
       pairNote = '⚠️ Pair tidak terdeteksi / belum didukung validator - angka risiko TIDAK diverifikasi otomatis. Hitung manual atau pilih pair di Pengaturan.';
     }
     // Rangkaian validator: koreksi risiko -> validator zona & konflik (angka entry/SL/TP/lot tidak diubah)
+    const capPerDirection = body.riskCap !== 'order'; // 'order' = batas lama (per order saja)
     const runChecks = (txt) => {
-      const c = pairCfg ? verifyRiskTables(txt, riskUsd, pairCfg) : { markdown: txt, notes: [], tablesChecked: 0 };
+      const last = pairCfg ? parseLastPrice(txt, pairCfg) : null;
+      const atr = pairCfg && last ? parseATR(txt, pairCfg, last) : null;
+      const c = pairCfg
+        ? verifyRiskTables(txt, riskUsd, pairCfg, new Date(), { last, capPerDirection })
+        : { markdown: txt, notes: [], fixes: [], tablesChecked: 0 };
       let md = c.markdown;
-      let g = { notes: [], flags: { cancel: [], shift: [], fix: [] }, skipped: null };
+      let g = { notes: [], flags: { cancel: [], shift: [], fix: [] }, skipped: null, atr };
       if (strict && pairCfg) {
         try {
-          g = applyOrderGuard(md, { pair: pairCfg, bias: extractBias(txt) });
+          g = applyOrderGuard(md, { pair: pairCfg, bias: extractBias(txt), atr });
           md = g.markdown;
         } catch (e) {
           console.error('[analyze] orderGuard error:', e);
         }
       }
-      return { checked: c, markdown: md, guard: g };
+      // error yang layak generate ulang: arah entry salah (guard) + arah SL/TP salah (guard Bagian 3, riskCheck 4B)
+      const fixes = [...(g.flags?.fix || []), ...(c.fixes || [])];
+      return { checked: c, markdown: md, guard: g, fixes, last, atr };
     };
-    let { checked, markdown, guard } = runChecks(text);
+    let { checked, markdown, guard, fixes, last: lastPx, atr: atrUsed } = runChecks(text);
     let finalText = text;
     let retried = false;
 
-    // Ulang SATU kali bila ada entry di luar rentang zona / arah salah (hanya bila waktu cukup)
-    const fixes = guard.flags?.fix || [];
+    // Ulang SATU kali hanya bila ada ARAH yang salah (entry/SL/TP). Jarak di luar rentang tipikal TIDAK memicu ulang
+    // (agar AI tidak dipaksa mencari level asal jaraknya pas).
     if (fixes.length && used && BUDGET_MS - (Date.now() - t0) > 24_000) {
       retried = true;
       try {
         const corr =
-          'KOREKSI WAJIB: validator menemukan entry di luar rentang zona. Tulis ULANG analisa lengkap (format sama persis) dengan memperbaiki HANYA hal berikut; pilih level struktur nyata di dalam rentang, hitung ulang SL, TP, lot, risiko, R:R, dan samakan Bagian 3 dengan 4B:\n- ' +
+          'KOREKSI WAJIB: validator menemukan ARAH yang salah (entry/SL/TP). Tulis ULANG analisa lengkap (format sama persis) dengan memperbaiki HANYA hal berikut. Tetap pakai level struktur nyata dari candle (jangan mengarang level demi jarak), hitung ulang SL, TP, lot, risiko, R:R, dan samakan Bagian 3 dengan 4B:\n- ' +
           fixes.join('\n- ');
         let t2 = '';
         if (two) {
@@ -288,14 +318,7 @@ export async function POST(req) {
             { role: 'user', parts: [{ text: corr }] },
           ],
         };
-        const rr = await fetch(`${BASE}/${used.model}:generateContent`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-          body: JSON.stringify(retryPayload),
-          cache: 'no-store',
-          signal: AbortSignal.timeout(Math.max(8_000, BUDGET_MS - (Date.now() - t0))),
-        });
-        const rj = await rr.json().catch(() => ({}));
+        const { r: rr, j: rj } = await callGemini(used.model, retryPayload, Math.max(8_000, BUDGET_MS - (Date.now() - t0)));
         log.push(`retry-zona ${used.model}: ${rr.status}`);
         if (rr.ok) {
           t2 = fixInlineTables(
@@ -310,8 +333,8 @@ export async function POST(req) {
         if (t2) {
           const r2 = runChecks(t2);
           // pakai hasil ulang hanya jika lebih baik (lebih sedikit pelanggaran)
-          if ((r2.guard.flags?.fix || []).length < fixes.length) {
-            ({ checked, markdown, guard } = r2);
+          if (r2.fixes.length < fixes.length) {
+            ({ checked, markdown, guard, fixes, last: lastPx, atr: atrUsed } = r2);
             finalText = t2;
           }
         }
@@ -335,6 +358,17 @@ export async function POST(req) {
     } else if (fundamental.stale) {
       notices.push('📅 Kalender memakai data tersimpan (sumber gagal diperbarui). Verifikasi jam rilis terbaru.');
     }
+    if (pairCfg && lastPx) {
+      const R = zoneRange(pairCfg, lastPx, atrUsed);
+      if (R) {
+        const a = R.atr;
+        const f = (x) => Number(x).toFixed(pairCfg.dec);
+        notices.push(
+          `📏 Pedoman jarak zona dari ${f(lastPx)} (ATR H1 ${f(a.h1)} / H4 ${f(a.h4)}, sumber: ${a.src === 'chart' ? 'dibaca dari chart' : a.src === 'campuran' ? 'sebagian dari chart' : 'profil pair (ATR tidak terbaca)'}): Zona 1 ${rangeText(pairCfg, R.z1)}, Zona 2 ${rangeText(pairCfg, R.z2)}. Struktur tetap lebih penting daripada jarak.`
+        );
+      }
+    }
+    if (fixes.length) notices.push(`🚫 Masih ada ${fixes.length} kesalahan arah setelah validasi — jangan pasang order yang ditandai 🚫.`);
     guard.notes.forEach((n) => notices.push(n));
     if (notices.length) {
       markdown = notices.map((n) => `> ${n}`).join('\n>\n') + '\n\n' + markdown;
@@ -354,6 +388,7 @@ export async function POST(req) {
       strict,
       mode: two ? '2stage' : 'single',
       zoneRetry: retried,
+      directionErrors: fixes.length,
       orderGuard: { notes: guard.notes.length, cancel: guard.flags.cancel.length, shift: guard.flags.shift.length, skipped: guard.skipped },
       attempts: log,
     });

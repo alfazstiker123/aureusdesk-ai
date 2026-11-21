@@ -1,6 +1,6 @@
 # AureusDesk AI 🟡
 
-Analisa Trading Emas (XAU/USD) Multi-Timeframe berbasis AI — **Next.js 14 (App Router) + Tailwind CSS + Supabase + Google Gemini `gemini-flash-lite-latest`** dengan **Kalender Ekonomi Live ForexFactory** (jam WIB, Actual/Forecast/Previous, No-Trade Zone) disuntik server ke prompt — tanpa Google Search Grounding (bebas limit 429 search).
+Analisa Trading Emas (XAU/USD) Multi-Timeframe berbasis AI — **Next.js 14 (App Router) + Tailwind CSS + Supabase + Google Gemini `gemini-flash-latest`** dengan **Kalender Ekonomi Live ForexFactory** (jam WIB, Actual/Forecast/Previous, No-Trade Zone) disuntik server ke prompt — tanpa Google Search Grounding (bebas limit 429 search).
 
 ---
 
@@ -123,3 +123,16 @@ npm run dev                  # buka http://localhost:3000
 ## Variabel Opsional
 - `APP_PIN` — PIN akses (default `123456`; ganti!).
 - `FINNHUB_API_KEY` — headline pasar forex Finnhub sebagai konteks sentimen tambahan (opsional).
+
+## Pembaruan Audit (Nov 2026)
+
+1. **Validasi arah SL/TP & R:R** — BUY wajib SL di bawah / TP di atas entry (SELL kebalikannya) di Bagian 3 dan 4B. Order yang terbalik ditandai 🚫 dan memicu satu kali generate ulang. R:R dihitung ulang dari angka entry/SL/TP; R:R < 1:1 diberi peringatan.
+2. **Batas risiko per arah** — total risiko BUY Zona 1 + Zona 2 (dan SELL) ≤ batas risiko user; lot diperkecil proporsional. Kirim `riskCap: "order"` di body `/api/analyze` untuk kembali ke batas per order.
+3. **Zona berbasis ATR** — rentang tipikal Zona 1 = 0.6–2.5× ATR H1, Zona 2 = 1–3× ATR H4. ATR dibaca AI dari chart (baris `**ATR:**`), dicek kewajarannya, dan memakai ATR profil pair jika tidak wajar. Rentang hanya **pedoman**: level di luar rentang diberi catatan ℹ️, tidak lagi dipaksa pindah lewat retry.
+4. **AI Vision** — model utama `gemini-flash-latest` (Lite hanya cadangan terakhir), thinking budget 1024 token, screenshot dikirim lossless (PNG/WebP) bila muat, JPEG kualitas tinggi sebagai cadangan. Mode 2 tahap kini mengekstrak urutan swing (HH/HL/LH/LL), struktur terakhir, dan ATR.
+5. **Kontrak & waktu** — pair JPY: Risiko = Lot × Jarak × 100000 / USDJPY. Profil XAGUSD ditambahkan (1 lot = 5000 oz). Daily Close & batas akhir pekan mengikuti DST New York (05:00 / Sabtu 04:00 WIB saat musim dingin AS, 04:00 / 03:00 saat musim panas). Waktu Berakhir 4B ditambah padanan **jam server MT4**.
+
+### Variabel opsional baru
+- `GEMINI_THINKING_BUDGET` — token thinking (default `1024`, `0` = mati).
+- `USDJPY_RATE` — kurs USDJPY untuk konversi risiko pair cross JPY (default 155).
+- `MT4_SERVER_UTC_OFFSET` — offset jam server broker (default otomatis: GMT+2 musim dingin / GMT+3 musim panas).
