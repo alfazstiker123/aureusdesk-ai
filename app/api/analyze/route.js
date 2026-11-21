@@ -8,6 +8,9 @@ import { fixInlineTables } from '@/lib/markdownFix';
 import { buildFundamentalBlock } from '@/lib/calendar';
 import { verifyRiskTables } from '@/lib/riskCheck';
 import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
+import { getMarketSnapshots, marketContext, mt4SymbolForPair } from '@/lib/mt4Market';
+import { getCloudMarketSnapshots, cloudMarketContext } from '@/lib/cloudMarket';
+import { buildSmcReport } from '@/lib/smc/engine';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,6 +23,65 @@ const BUDGET_MS = 52_000; // total waktu semua percobaan (di bawah maxDuration)
 
 // Urutan percobaan (tanpa Google Search): Flash (utama) -> cadangan -> Lite (terakhir, paling murah tapi paling lemah membaca angka).
 const ATTEMPTS = [{ model: GEMINI_MODEL }, ...GEMINI_FALLBACK_MODELS.map((model) => ({ model }))];
+
+const SMC_SYSTEM_ADDENDUM = `
+ATURAN V2 SMC — PRIORITAS SAAT OHLC CLOUD/MT4 TERSEDIA:
+- Jangan memaksakan empat pending order BUY/SELL jika struktur tidak membuktikan zona yang layak. Boleh tulis NO TRADE / WAIT untuk arah tanpa bukti.
+- Zona entry harus berakar pada OB atau FVG yang fresh dan terkait displacement/BOS; tandai POI, trigger konfirmasi, dan entry sebagai tiga hal berbeda.
+- BOS/CHoCH hanya valid dari candle tertutup; candle berjalan tidak boleh menjadi konfirmasi.
+- Sweep harus menembus liquidity level lalu candle tertutup kembali melewati level; wick saja tanpa close-back bukan sweep terkonfirmasi.
+- OB yang invalidated dan FVG yang fully mitigated tidak boleh dipakai sebagai zona fresh.
+- ATR(14) H1/H4 dari OHLC adalah sumber utama untuk volatilitas; jangan menggantinya dengan tebakan atau ATR profil bila tersedia.
+- Gunakan hierarchy W1/D1 konteks, H4/H1 struktur, M15/M5 setup; timeframe rendah tidak boleh membatalkan struktur lebih tinggi tanpa CHoCH valid.
+- Jika data OHLC tidak lengkap, stale, atau pair tidak cocok, nyatakan VISUAL ONLY — CONFIDENCE TERBATAS dan jangan klaim konfirmasi OHLC.`;
+
+async function loadMt4Context(pairId) {
+  if (!pairId || !process.env.SUPABASE_SERVICE_ROLE_KEY) return { text: '', snapshots: [], smc: null, source: 'NONE' };
+  try {
+    const symbol = mt4SymbolForPair(pairId);
+    const snapshots = await getMarketSnapshots(symbol);
+    if (!snapshots.length) throw new Error('Feed MT4 belum tersedia/fresh.');
+    const quoteSnap = snapshots.find((x) => x.timeframe === 'M5') || snapshots.find((x) => x.timeframe === 'M15');
+    const quotePrice = Number(quoteSnap?.bid || quoteSnap?.ask || quoteSnap?.bars?.at(-1)?.close || 0);
+    const profile = PAIRS[pairId] || resolvePair(pairId);
+    if (quotePrice && profile?.priceRange && (quotePrice < profile.priceRange[0] || quotePrice > profile.priceRange[1]))
+      throw new Error(`Harga feed ${quotePrice} di luar rentang profil ${pairId}; periksa MT4_SYMBOL_MAP.`);
+    if (quoteSnap?.bid && quoteSnap?.ask && quoteSnap.ask < quoteSnap.bid) throw new Error('Bid/Ask MT4 tidak konsisten.');
+    const byTf = Object.fromEntries(snapshots.map((x) => [x.timeframe, x.bars]));
+    const smc = buildSmcReport(byTf);
+    const report = smc?.analyses?.length ? `\n\nRINGKASAN SMC DETERMINISTIK (hasil kalkulasi candle tertutup; bukti, bukan sinyal otomatis):\n${smc.promptBlock}` : '';
+    return { text: marketContext(snapshots) + report, snapshots, smc, source: 'MT4_EA', warnings: [] };
+  } catch (e) {
+    return { text: `DATA OHLC MT4 tidak dapat diverifikasi (${e.message}).`, snapshots: [], smc: null, source: 'NONE', error: e.message };
+  }
+}
+
+async function loadMarketContext(pairId, sourceMode = 'cloud') {
+  if (!pairId || sourceMode === 'screenshot') return { text: '', snapshots: [], smc: null, source: 'SCREENSHOT' };
+  if (sourceMode === 'mt4') return loadMt4Context(pairId);
+  if (sourceMode === 'auto') {
+    const cloud = await loadMarketContext(pairId, 'cloud');
+    if (cloud.snapshots?.length) return cloud;
+    const mt4 = await loadMt4Context(pairId);
+    if (mt4.snapshots?.length) return mt4;
+    return { ...cloud, error: [cloud.error, mt4.error].filter(Boolean).join(' | ') };
+  }
+  try {
+    const result = await getCloudMarketSnapshots(pairId);
+    const snapshots = result.snapshots;
+    const profile = PAIRS[pairId] || resolvePair(pairId);
+    const quoteSnap = snapshots.find((x) => x.timeframe === 'M5') || snapshots.find((x) => x.timeframe === 'M15');
+    const quotePrice = Number(quoteSnap?.bars?.at(-1)?.close || 0);
+    if (quotePrice && profile?.priceRange && (quotePrice < profile.priceRange[0] || quotePrice > profile.priceRange[1]))
+      throw new Error(`Harga Cloud ${quotePrice} di luar rentang profil ${pairId}; periksa CLOUD_SYMBOL_MAP.`);
+    const byTf = Object.fromEntries(snapshots.map((x) => [x.timeframe, x.bars]));
+    const smc = buildSmcReport(byTf);
+    const report = smc?.analyses?.length ? `\n\nRINGKASAN SMC DETERMINISTIK DARI CLOUD (candle tertutup; bukan sinyal otomatis):\n${smc.promptBlock}` : '';
+    return { text: cloudMarketContext(snapshots, result.warnings, result.provider) + report, snapshots, smc, source: 'CLOUD', provider: result.provider, warnings: result.warnings };
+  } catch (e) {
+    return { text: `DATA OHLC CLOUD TIDAK TERSEDIA/VALID (${String(e.message || e).slice(0, 220)}). Gunakan screenshot saja dan jangan klaim konfirmasi OHLC.`, snapshots: [], smc: null, source: 'NONE', error: String(e.message || e) };
+  }
+}
 
 // "Thinking" untuk penalaran struktur bertahap. GEMINI_THINKING_BUDGET=0 mematikan. Model yang menolak -> dicoba ulang tanpa thinking.
 const THINKING_BUDGET = (() => {
@@ -60,6 +122,7 @@ export async function POST(req) {
     const fixedPair = pairChoice === 'AUTO' ? null : PAIRS[pairChoice];
     const strict = body.strict !== false; // Validator Zona & Konflik Order (Pengaturan), default ON
     const wantTwoStage = body.mode === '2stage';
+    const marketSource = ['cloud', 'mt4', 'auto', 'screenshot'].includes(body.marketSource) ? body.marketSource : 'cloud';
     const gwModel = gwModelOf(body.gwModel);
 
     // Prioritas: key dari UI (header) -> env Vercel
@@ -88,21 +151,61 @@ export async function POST(req) {
 
     const labels = images.map((img) => img.label || 'Chart');
     const riskUsd = ((Number(balance) || 0) * (Number(risk) || 0)) / 100;
+    let resolvedPair = fixedPair;
+    let autoPairNote = '';
+
+    // AUTO + Gemini langsung: ekstrak pair secara ringan terlebih dahulu agar Cloud OHLC
+    // dapat dimuat sebelum analisa final. Jika ekstraksi gagal, V1 screenshot-flow tetap berjalan.
+    if (!resolvedPair && !wantTwoStage && marketSource !== 'screenshot') {
+      try {
+        // Ringan: hanya gambar pertama + skema kecil (pair saja), dengan model cadangan.
+        const first = images[0];
+        const pairPayload = {
+          systemInstruction: { parts: [{ text: 'Baca nama pair/instrumen pada judul chart MT4 (mis. BTCUSD, XAUUSD, EURUSD). Jangan menebak; kosongkan bila tidak terbaca.' }] },
+          contents: [{ role: 'user', parts: [{ text: 'Pair apa pada chart ini?' }, { inlineData: { mimeType: first.mimeType, data: first.data } }] }],
+          generationConfig: { temperature: 0, maxOutputTokens: 120, responseMimeType: 'application/json',
+            responseSchema: { type: 'OBJECT', properties: { pair: { type: 'STRING' } }, required: ['pair'] } },
+        };
+        let pairText = '';
+        for (const m of [GEMINI_MODEL, 'gemini-flash-latest', 'gemini-flash-lite-latest']) {
+          if (BUDGET_MS - (Date.now() - t0) < 40_000) break;
+          try {
+            const exRes = await fetch(`${BASE}/${m}:generateContent`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+              body: JSON.stringify(pairPayload), cache: 'no-store', signal: AbortSignal.timeout(7000),
+            });
+            const exJson = await exRes.json().catch(() => ({}));
+            if (!exRes.ok) continue;
+            pairText = (exJson?.candidates?.[0]?.content?.parts || []).filter((x) => !x.thought).map((x) => x.text || '').join('').trim();
+            if (pairText) break;
+          } catch { /* coba model berikutnya */ }
+        }
+        if (pairText) {
+          try { resolvedPair = resolvePair(JSON.parse(pairText.replace(/^```(?:json)?|```$/g, '').trim())?.pair); } catch { resolvedPair = null; }
+        }
+        if (!resolvedPair) autoPairNote = 'Pair AUTO tidak terbaca dari screenshot; analisis berjalan tanpa OHLC Cloud. Pilih pair manual di Pengaturan agar data candle dipakai.';
+      } catch (e) {
+        autoPairNote = 'Ekstraksi pair AUTO gagal; analisis berjalan dengan screenshot saja. Pilih pair manual agar data candle dipakai.';
+      }
+    }
 
     // Kalender ekonomi live (ForexFactory) + Finnhub opsional; gagal -> tetap lanjut dengan catatan offline
-    const fundamental = await buildFundamentalBlock(fixedPair ? fixedPair.id : null).catch((e) => ({
+    const fundamental = await buildFundamentalBlock((resolvedPair || fixedPair)?.id || null).catch((e) => ({
       text: `=== DATA FUNDAMENTAL LIVE ===\nSTATUS KALENDER: OFFLINE (${e?.message || 'error'}). Jadwal berita TIDAK tersedia.\n=== AKHIR DATA FUNDAMENTAL ===`,
       offline: true,
     }));
 
-    const parts = [{ text: buildUserPrompt({ balance, risk, session, labels, pair: fixedPair, fundamental: fundamental.text, strict }) }];
+    const marketInitial = resolvedPair ? await loadMarketContext(resolvedPair.id, marketSource) : { text: '', snapshots: [], smc: null, source: 'NONE' };
+    let mt4ContextUsed = marketInitial;
+    const parts = [{ text: buildUserPrompt({ balance, risk, session, labels, pair: resolvedPair || fixedPair, fundamental: fundamental.text, strict }) +
+      (marketInitial.text ? `\n\n${marketInitial.text}` : '') }];
     images.forEach((img, i) => {
       parts.push({ text: `Gambar ${i + 1} — ${labels[i]}` });
       parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
     });
 
     const basePayload = {
-      systemInstruction: { parts: [{ text: buildSystemInstruction(fixedPair, strict) }] },
+      systemInstruction: { parts: [{ text: buildSystemInstruction(resolvedPair || fixedPair, strict) + (marketInitial.snapshots?.length ? SMC_SYSTEM_ADDENDUM : '') }] },
       contents: [{ role: 'user', parts }],
       generationConfig: withThinking({
         temperature: 0.2,
@@ -178,12 +281,14 @@ export async function POST(req) {
           }
           const ms1 = Date.now() - t0;
           if (!data) throw new Error('ekstraksi gagal');
-          const p2 = fixedPair || resolvePair(data.pair) || (data.lastPrice ? guessPairByPrice(data.lastPrice) : null);
+          const p2 = fixedPair || resolvedPair || resolvePair(data.pair) || (data.lastPrice ? guessPairByPrice(data.lastPrice) : null);
           const built = buildCandidates(data, p2);
-          twoSystem = buildSystemInstruction(fixedPair || p2, strict) + '\n' + STAGE2_ADDENDUM;
+          const mt4Two = await loadMarketContext((fixedPair || p2)?.id, marketSource);
+          twoSystem = buildSystemInstruction(fixedPair || resolvedPair || p2, strict) + '\n' + STAGE2_ADDENDUM + (mt4Two.snapshots?.length ? SMC_SYSTEM_ADDENDUM : '');
+          if (mt4Two.snapshots?.length) mt4ContextUsed = mt4Two;
           twoUser =
-            buildUserPrompt({ balance, risk, session, labels, pair: fixedPair || p2, fundamental: fundamental.text, strict }) +
-            '\n\n' + formatDataBlock(data, p2, built);
+            buildUserPrompt({ balance, risk, session, labels, pair: fixedPair || resolvedPair || p2, fundamental: fundamental.text, strict }) +
+            '\n\n' + formatDataBlock(data, p2, built) + (mt4Two.text ? `\n\n${mt4Two.text}` : '');
           const left2 = BUDGET_MS - (Date.now() - t0);
           const g = await gatewayChat({ model: gwModel, system: twoSystem, user: twoUser, timeoutMs: left2 - 2_000 });
           log.push(`tahap2 ${gwModel}: ${g.ok ? 'ok ' + g.ms + 'ms' : g.error}`);
@@ -222,6 +327,10 @@ export async function POST(req) {
     }
 
     if (two) used = { model: `2tahap:${two.model}` };
+    // Jika AUTO terdeteksi di tahap ekstraksi tetapi gateway tahap 2 gagal, pastikan fallback Gemini langsung juga menerima OHLC yang sama.
+    if (!two && !resolvedPair && mt4ContextUsed?.snapshots?.length && mt4ContextUsed.text) {
+      parts.push({ text: mt4ContextUsed.text });
+    }
     if (!used) {
       const status = res?.status || 504;
       let msg = json?.error?.message || (res ? `HTTP ${status}` : 'Waktu habis menunggu Gemini.');
@@ -253,7 +362,7 @@ export async function POST(req) {
 
     // Verifikasi rumus risiko: Risiko = Lot x Jarak SL x 100 (koreksi angka karangan AI)
     // Pair: pilihan user, atau hasil deteksi AI (baris **PAIR:**), cadangan tebakan dari harga terakhir
-    let pairCfg = fixedPair || extractPair(text);
+    let pairCfg = fixedPair || resolvedPair || extractPair(text);
     let pairNote = '';
     if (!pairCfg) {
       const m = text.match(/harga\s+terakhir[^0-9]{0,30}([\d.,]+)/i);
@@ -266,11 +375,17 @@ export async function POST(req) {
     if (!pairCfg) {
       pairNote = '⚠️ Pair tidak terdeteksi / belum didukung validator - angka risiko TIDAK diverifikasi otomatis. Hitung manual atau pilih pair di Pengaturan.';
     }
+    // ATR(14) dihitung dari OHLC provider bila tersedia; profil pair hanya fallback terakhir.
+    const smcAnalysesForAtr = mt4ContextUsed?.smc?.analyses || [];
+    const h1Atr = smcAnalysesForAtr.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14;
+    const h4Atr = smcAnalysesForAtr.find((x) => x.timeframe === 'H4' && x.status === 'OK')?.atr14;
+    const marketAtr = h1Atr > 0 && h4Atr > 0 ? { h1: h1Atr, h4: h4Atr, src: `${mt4ContextUsed.source}_OHLC` } : null;
+
     // Rangkaian validator: koreksi risiko -> validator zona & konflik (angka entry/SL/TP/lot tidak diubah)
     const capPerDirection = body.riskCap !== 'order'; // 'order' = batas lama (per order saja)
     const runChecks = (txt) => {
       const last = pairCfg ? parseLastPrice(txt, pairCfg) : null;
-      const atr = pairCfg && last ? parseATR(txt, pairCfg, last) : null;
+      const atr = pairCfg && last ? (marketAtr || parseATR(txt, pairCfg, last)) : null;
       const c = pairCfg
         ? verifyRiskTables(txt, riskUsd, pairCfg, new Date(), { last, capPerDirection })
         : { markdown: txt, notes: [], fixes: [], tablesChecked: 0 };
@@ -343,8 +458,31 @@ export async function POST(req) {
       }
     }
 
+    let mt4Status = mt4ContextUsed?.snapshots?.length ? 'OHLC_HYBRID' : 'SCREENSHOT_ONLY';
+    const mt4Report = mt4ContextUsed?.smc || null;
+    let mt4PriceDeltaPct = null;
+    if (mt4Status === 'OHLC_HYBRID' && pairCfg && lastPx) {
+      const q = mt4ContextUsed.snapshots.find((x) => x.timeframe === 'M5') || mt4ContextUsed.snapshots.find((x) => x.timeframe === 'M15');
+      const ref = Number(q?.bid || q?.ask || q?.bars?.at(-1)?.close || 0);
+      if (ref > 0) {
+        mt4PriceDeltaPct = Math.abs(ref - lastPx) / lastPx * 100;
+        const maxDelta = pairCfg.group === 'btc' ? 1.5 : pairCfg.group === 'gold' ? 1.0 : 0.6;
+        if (mt4PriceDeltaPct > maxDelta) mt4Status = 'PRICE_MISMATCH';
+      }
+    }
+    // Reviewer OpenAI sengaja tidak dijalankan pada jalur live V2: menjaga batas waktu dan fokus pada validator deterministik.
+
     const notices = [];
+    if (mt4Status === 'OHLC_HYBRID' && mt4Report?.analyses?.length) {
+      notices.push(`📡 Data Hybrid aktif: OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'Cloud' : 'MT4 EA'} diterima dan lolos pemeriksaan. SMC dihitung deterministik dari candle tertutup; bukan probabilitas profit.`);
+      markdown = `> 📡 **V2 — OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'CLOUD' : 'MT4'} + SMC**\n> Sumber: ${mt4ContextUsed.source === 'CLOUD' ? `${mt4ContextUsed.provider || 'Cloud'} (feed exchange publik, bukan broker Anda)` : 'MT4 EA'}. Cocokkan harga dengan chart broker sebelum menggunakan level.\n\n${mt4Report.promptBlock}\n\n---\n\n${markdown}`;
+    } else if (mt4Status === 'PRICE_MISMATCH') {
+      notices.push(`🚫 PRICE MISMATCH: harga screenshot dan feed pasar berbeda ${mt4PriceDeltaPct?.toFixed(2)}%. Jangan gunakan level entry dari analisa ini sebelum simbol/instrumen, waktu screenshot, dan chart diperiksa ulang.`);
+    } else if (pairCfg) {
+      if (marketSource !== 'screenshot') notices.push(`⚠️ Analisis berjalan tanpa OHLC Cloud/MT4${mt4ContextUsed?.error ? `: ${mt4ContextUsed.error}` : ''}. Hasil ini SCREENSHOT ONLY; jangan anggap SMC terkonfirmasi dari candle.`);
+    }
     if (pairNote) notices.push(pairNote);
+    if (autoPairNote) notices.push(autoPairNote);
     if (two) {
       notices.push(`🧪 Mode 2 tahap: Gemini membaca gambar (${two.cands} kandidat level, ${two.dropped} angka sumbu dibuang) → \`${two.model}\` menulis analisa (${Math.round((two.ms1 + two.ms2) / 1000)} dtk). Eksperimental — bandingkan dengan mode Gemini langsung.`);
     } else if (twoNote) {
@@ -364,7 +502,7 @@ export async function POST(req) {
         const a = R.atr;
         const f = (x) => Number(x).toFixed(pairCfg.dec);
         notices.push(
-          `📏 Pedoman jarak zona dari ${f(lastPx)} (ATR H1 ${f(a.h1)} / H4 ${f(a.h4)}, sumber: ${a.src === 'chart' ? 'dibaca dari chart' : a.src === 'campuran' ? 'sebagian dari chart' : 'profil pair (ATR tidak terbaca)'}): Zona 1 ${rangeText(pairCfg, R.z1)}, Zona 2 ${rangeText(pairCfg, R.z2)}. Struktur tetap lebih penting daripada jarak.`
+          `📏 Pedoman jarak zona dari ${f(lastPx)} (ATR H1 ${f(a.h1)} / H4 ${f(a.h4)}, sumber: ${String(a.src || '').includes('_OHLC') ? 'dihitung dari candle OHLC provider' : a.src === 'chart' ? 'dibaca dari chart' : a.src === 'campuran' ? 'sebagian dari chart' : 'profil pair (fallback)'}): Zona 1 ${rangeText(pairCfg, R.z1)}, Zona 2 ${rangeText(pairCfg, R.z2)}. Struktur tetap lebih penting daripada jarak.`
         );
       }
     }
@@ -387,6 +525,11 @@ export async function POST(req) {
       riskCorrections: checked.notes.length,
       strict,
       mode: two ? '2stage' : 'single',
+      marketDataMode: mt4Status,
+      mt4PriceDeltaPct,
+      openaiReview: { skipped: true, reason: 'disabled_in_live_v2' },
+      smcTimeframes: mt4Report?.analyses?.map((x) => x.timeframe) || [],
+      marketDataSource: mt4ContextUsed?.source || 'NONE',
       zoneRetry: retried,
       directionErrors: fixes.length,
       orderGuard: { notes: guard.notes.length, cancel: guard.flags.cancel.length, shift: guard.flags.shift.length, skipped: guard.skipped },

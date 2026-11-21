@@ -32,6 +32,7 @@ const LS = {
   strict: 'aureus_strict',
   mode: 'aureus_mode',
   gwModel: 'aureus_gwmodel',
+  marketSource: 'aureus_market_source',
 };
 
 // Format digit tombol salin harga. 'ASLI' = apa adanya dari hasil analisa (bawaan).
@@ -81,6 +82,7 @@ export default function Home() {
   const [strict, setStrict] = useState(true);
   const [mode, setMode] = useState('single');
   const [gwModel, setGwModel] = useState('kimi-k2.7-code-highspeed');
+  const [marketSource, setMarketSource] = useState('cloud');
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -130,6 +132,8 @@ export default function Home() {
       if (nm && NAV_MODES.some((m) => m.key === nm)) setNavMode(nm);
       if (localStorage.getItem(LS.strict) === 'off') setStrict(false);
       if (localStorage.getItem(LS.mode) === '2stage') setMode('2stage');
+      const ms = localStorage.getItem(LS.marketSource);
+      if (ms && ['cloud', 'mt4', 'auto', 'screenshot'].includes(ms)) setMarketSource(ms);
       const gm = localStorage.getItem(LS.gwModel);
       if (gm && /^[A-Za-z0-9._:\/-]{2,80}$/.test(gm)) setGwModel(gm);
       const cf = localStorage.getItem(LS.copyFmt);
@@ -453,7 +457,7 @@ export default function Home() {
           'Content-Type': 'application/json',
           ...(apiKey.trim() ? { 'x-gemini-key': apiKey.trim() } : {}),
         },
-        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict, mode, gwModel }),
+        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict, mode, gwModel, marketSource }),
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || 'Gagal menganalisa.');
@@ -872,6 +876,11 @@ export default function Home() {
         onTheme={(k) => {
           setTheme(k);
           persist(THEME_KEY, k);
+        }}
+        marketSource={marketSource}
+        onMarketSource={(v) => {
+          setMarketSource(v);
+          persist(LS.marketSource, v);
         }}
         mode={mode}
         onMode={(v) => {

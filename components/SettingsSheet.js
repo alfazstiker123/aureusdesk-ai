@@ -5,7 +5,7 @@ import { THEMES } from '@/lib/themes';
 import { NAV_MODES } from '@/lib/sections';
 
 // Panel Pengaturan: bottom-sheet di HP, dialog di tablet/desktop. Berisi Tema & API Key.
-export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, onTestGateway, onLoadModels }) {
+export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, onTestGateway, onLoadModels, marketSource = 'cloud', onMarketSource }) {
   const [showKey, setShowKey] = useState(false);
   const panelRef = useRef(null);
 
@@ -68,6 +68,28 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
               );
             })}
           </div>
+        </section>
+
+        <section className="mb-5">
+          <h3 className="field-label">Sumber Data Candle</h3>
+          <div className="grid grid-cols-1 gap-2" role="radiogroup" aria-label="Sumber data candle">
+            {[
+              { k: 'cloud', t: 'Cloud Data (gratis, disarankan)', d: 'OHLC dari feed publik exchange (Kraken/Binance), tanpa kunci & tanpa PC. Saat ini hanya BTCUSD; pair lain otomatis screenshot saja.' },
+              { k: 'mt4', t: 'MT4 EA (PC/VPS)', d: 'Memakai candle broker dari EA MT4 yang berjalan di desktop/VPS.' },
+              { k: 'auto', t: 'Cloud lalu MT4', d: 'Cloud sebagai utama; mencoba MT4 bila Cloud tidak tersedia.' },
+              { k: 'screenshot', t: 'Screenshot saja', d: 'Mode lama V1 tanpa OHLC Cloud/MT4.' },
+            ].map((m) => {
+              const on = marketSource === m.k;
+              return (
+                <button key={m.k} type="button" role="radio" aria-checked={on} onClick={() => onMarketSource?.(m.k)}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition ${on ? 'border-gold bg-gold/10 ring-1 ring-gold/50' : 'border-line bg-panel2 hover:border-gold/40'}`}>
+                  <span className="block text-sm font-semibold">{m.t}</span>
+                  <span className="mt-0.5 block text-[11px] leading-snug text-muted">{m.d}</span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-[10px] leading-snug text-muted">Kunci API data pasar hanya disimpan di server Vercel. Provider Cloud bukan harga broker; cocokkan selisih harga sebelum memakai level.</p>
         </section>
 
         <section className="mb-5">
