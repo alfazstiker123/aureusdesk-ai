@@ -6,7 +6,9 @@ import HistoryPanel, { biasTone, toneClass, formatWIB } from '@/components/Histo
 import PinGate from '@/components/PinGate';
 import CalendarWidget from '@/components/CalendarWidget';
 import SettingsSheet from '@/components/SettingsSheet';
-import SectionNav from '@/components/SectionNav';
+import ResultView from '@/components/ResultView';
+import PairPicker, { QuickPairs, pairLabel } from '@/components/PairPicker';
+import { CandleGuideModal } from '@/components/CandleSvg';
 import { NAV_KEY, NAV_DEFAULT, NAV_MODES } from '@/lib/sections';
 import { compressImage, makeThumbnail, formatKB } from '@/lib/imageCompress';
 import { PAIR_OPTIONS, resolvePair } from '@/lib/pairs';
@@ -65,6 +67,33 @@ async function safeJson(res) {
   }
 }
 
+// Jam WIB + label sesi pasar (hanya tampilan; tidak memengaruhi analisa)
+function deskClock() {
+  const now = new Date();
+  const hm = new Intl.DateTimeFormat('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hour12: false }).format(now);
+  const h = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jakarta', hour: '2-digit', hourCycle: 'h23' }).format(now));
+  const day = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Jakarta', weekday: 'short' }).format(now);
+  let label;
+  let dot;
+  if (day === 'Sat' || (day === 'Sun' && h < 4)) {
+    label = 'Akhir Pekan (Forex Tutup · Kripto Aktif)';
+    dot = 'bg-aurum';
+  } else if (h >= 19 && h <= 23) {
+    label = 'Overlap London–New York (Volatilitas Tinggi)';
+    dot = 'bg-up animate-pulse';
+  } else if (h >= 14 && h < 19) {
+    label = 'Sesi London Aktif';
+    dot = 'bg-gold animate-pulse';
+  } else if (h >= 6 && h < 14) {
+    label = 'Sesi Asia / Tokyo Aktif';
+    dot = 'bg-sky-400';
+  } else {
+    label = 'Sesi New York Late / Sydney';
+    dot = 'bg-indigo-400';
+  }
+  return { hm: `${hm.replace('.', ':')} WIB`, label, dot };
+}
+
 function tfOrder(label) {
   const i = TIMEFRAMES.indexOf(label);
   return i === -1 ? 99 : i;
@@ -78,7 +107,7 @@ export default function Home() {
   const [session, setSession] = useState('Sesi Asia');
   const [pair, setPair] = useState('AUTO');
   const [copyFmt, setCopyFmt] = useState('ASLI');
-  const [theme, setTheme] = useState('gold');
+  const [theme, setTheme] = useState('desk');
   const [navMode, setNavMode] = useState(NAV_DEFAULT);
   const [strict, setStrict] = useState(true);
   const [mode, setMode] = useState('single');
@@ -111,9 +140,19 @@ export default function Home() {
   // UI
   const [tab, setTab] = useState('analisa'); // mobile
   const [toast, setToast] = useState('');
+  const [pairOpen, setPairOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [clock, setClock] = useState(null);
   const resultRef = useRef(null);
   const imagesRef = useRef(images);
   imagesRef.current = images;
+
+  useEffect(() => {
+    const tick = () => setClock(deskClock());
+    tick();
+    const t = setInterval(tick, 15000);
+    return () => clearInterval(t);
+  }, []);
 
   const loading = stage !== null;
   const riskUsd = ((Number(balance) || 0) * (Number(risk) || 0)) / 100;
@@ -541,10 +580,14 @@ export default function Home() {
     <div className="min-h-screen">
       {/* HEADER */}
       <header className="app-header sticky top-0 z-30 border-b border-line/70 bg-night/80 backdrop-blur-xl print:hidden">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3">
+        <div className="mx-auto flex max-w-[1680px] items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
           <div className="flex min-w-0 items-center gap-2.5">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/icon-192.png" alt="AureusDesk AI" width="36" height="36" className="h-9 w-9 flex-none rounded-xl shadow-md" />
+            <div className="h-10 w-10 flex-none rounded-xl bg-gradient-to-br from-amber-200 via-aurum to-amber-600 p-[1.5px] shadow-md shadow-amber-500/20" aria-hidden="true">
+              <div className="flex h-full w-full flex-col items-center justify-center rounded-[10px] bg-[#090F1D] leading-none">
+                <span className="bg-gradient-to-b from-amber-200 to-amber-500 bg-clip-text text-base font-black text-transparent">A</span>
+                <span className="-mt-0.5 text-[6px] font-bold uppercase tracking-wider text-amber-300/90">Aureus</span>
+              </div>
+            </div>
             <div className="min-w-0">
               <h1 className="text-base font-extrabold leading-tight tracking-tight">
                 AureusDesk <span className="text-gold">AI</span>
@@ -609,8 +652,8 @@ export default function Home() {
         </div>
 
         {/* Tab mobile */}
-        <div className="mx-auto flex max-w-7xl gap-1 px-4 pb-2 lg:hidden">
-          <div className="flex w-full gap-1 rounded-xl bg-panel2 p-1">
+        <div className="mx-auto flex max-w-[1680px] gap-1 px-4 pb-2 sm:px-6 lg:px-8">
+          <div className="grid w-full grid-cols-2 gap-1.5 rounded-2xl border border-line/90 bg-panel p-1 lg:w-[320px]">
           {[
             ['analisa', '📈 Analisa'],
             ['riwayat', `📒 Riwayat (${history.length})`],
@@ -619,8 +662,8 @@ export default function Home() {
               key={k}
               type="button"
               onClick={() => setTab(k)}
-              className={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition ${
-                tab === k ? 'bg-gold text-night shadow' : 'text-muted hover:text-ink'
+              className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition sm:text-sm ${
+                tab === k ? 'bg-gradient-to-b from-gold to-gold/80 font-extrabold text-night shadow-md shadow-gold/30' : 'text-muted hover:text-ink'
               }`}
             >
               {l}
@@ -630,35 +673,50 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-7xl grid-cols-1 gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <main className="mx-auto grid max-w-[1680px] grid-cols-1 gap-4 px-4 py-4 sm:px-6 lg:px-8">
         {/* KOLOM UTAMA */}
-        <section className={`min-w-0 space-y-4 ${tab === 'analisa' ? '' : 'hidden lg:block'} print:block`}>
+        <section className={`min-w-0 space-y-4 ${tab === 'analisa' ? '' : 'hidden'} print:block`}>
           {/* PENGATURAN */}
           <div className="card p-4 print:hidden">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-line/70 pb-3">
+              <div className="flex items-center gap-2 text-xs">
+                <span className={`h-2.5 w-2.5 rounded-full ${clock?.dot || 'bg-line'}`} />
+                <span className="font-bold text-ink">{clock?.label || 'Memuat sesi...'}</span>
+                <span className="rounded-md border border-line bg-night px-2 py-0.5 font-mono text-[11px] text-gold">{clock?.hm || '--:-- WIB'}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setGuideOpen(true)}
+                className="flex items-center gap-1 rounded-lg border border-line bg-night px-2.5 py-1 text-[11px] font-bold text-gold transition hover:bg-panel2"
+              >
+                🕯️ Pola Candle
+              </button>
+            </div>
             <h2 className="mb-3 text-sm font-bold">🎛️ Parameter Analisa</h2>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="sm:col-span-2 lg:col-span-4">
                 <label className="field-label" htmlFor="pair">Instrumen / Pair</label>
-                <select
+                <button
                   id="pair"
-                  className="input"
-                  value={pair}
-                  onChange={(e) => {
-                    setPair(e.target.value);
-                    persist(LS.pair, e.target.value);
-                  }}
+                  type="button"
+                  onClick={() => setPairOpen(true)}
+                  className="flex w-full items-center justify-between rounded-xl border border-line bg-night px-3.5 py-2.5 text-left transition hover:border-gold"
                 >
-                  {PAIR_OPTIONS.filter((o) => !o.group).map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                  {[...new Set(PAIR_OPTIONS.filter((o) => o.group).map((o) => o.group))].map((g) => (
-                    <optgroup key={g} label={g}>
-                      {PAIR_OPTIONS.filter((o) => o.group === g).map((o) => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
+                  <span className="flex min-w-0 items-center gap-2.5">
+                    <span className="font-mono text-sm font-extrabold text-strong sm:text-base">{pair === 'AUTO' ? 'AUTO' : pair}</span>
+                    <span className="truncate text-xs text-muted">{pairLabel(pair)}</span>
+                  </span>
+                  <span className="flex-none text-xs font-bold text-gold">🔍 Pilih ▾</span>
+                </button>
+                <div className="mt-2">
+                  <QuickPairs
+                    value={pair}
+                    onPick={(v) => {
+                      setPair(v);
+                      persist(LS.pair, v);
+                    }}
+                  />
+                </div>
                 <p className="mt-1 text-[11px] text-muted">
                   {pair === 'AUTO'
                     ? 'AI membaca nama pair di pojok kiri atas chart, lalu memakai pengali risiko pair itu.'
@@ -840,7 +898,7 @@ export default function Home() {
                 ))}
               </div>
 
-              <SectionNav content={result.markdown} priceDecimals={priceDecimals} mode={navMode} />
+              <ResultView content={result.markdown} priceDecimals={priceDecimals} mode={navMode} pairId={result.meta?.pair} onToast={showToast} />
             </div>
           )}
 
@@ -856,7 +914,7 @@ export default function Home() {
         </section>
 
         {/* SIDEBAR RIWAYAT */}
-        <aside className={`min-w-0 ${tab === 'riwayat' ? '' : 'hidden lg:block'} lg:sticky lg:top-20 lg:self-start print:hidden`}>
+        <aside className={`min-w-0 ${tab === 'riwayat' ? '' : 'hidden'} print:hidden`}>
           <HistoryPanel
             items={history}
             loading={histLoading}
@@ -934,6 +992,17 @@ export default function Home() {
           persist(LS.key, v.trim());
         }}
       />
+
+      <PairPicker
+        open={pairOpen}
+        value={pair}
+        onPick={(v) => {
+          setPair(v);
+          persist(LS.pair, v);
+        }}
+        onClose={() => setPairOpen(false)}
+      />
+      <CandleGuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
 
       {toast && (
         <div

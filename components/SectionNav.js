@@ -3,9 +3,44 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import MarkdownView from '@/components/MarkdownView';
 import { splitSections, SECTION_META } from '@/lib/sections';
+import { segmentSection } from '@/lib/zoneParse';
+import { fixInlineTables } from '@/lib/markdownFix';
+import { ExecCards, PendingCards } from '@/components/ZoneCards';
+
+// Bagian 3 & 4: tabel zona/order ditampilkan sebagai kartu; teks lain tetap Markdown.
+// Tabel asli tetap bisa dibuka (lipatan) sebagai cadangan.
+function SectionBody({ body, n, priceDecimals, onGuide }) {
+  const segs = useMemo(() => (n === 3 || n === 4 ? segmentSection(fixInlineTables(body || '')) : null), [body, n]);
+  if (!segs || !segs.some((x) => x.type === 'exec' || x.type === 'pending')) {
+    return <MarkdownView content={body} priceDecimals={priceDecimals} />;
+  }
+  return (
+    <>
+      {segs.map((x, i) => {
+        if (x.type === 'exec' || x.type === 'pending') {
+          return (
+            <div key={i}>
+              {x.type === 'exec' ? (
+                <ExecCards rows={x.rows} decimals={priceDecimals} onGuide={onGuide} />
+              ) : (
+                <PendingCards rows={x.rows} decimals={priceDecimals} />
+              )}
+              <details className="mb-3 print:hidden">
+                <summary className="cursor-pointer text-[11px] text-muted hover:text-ink">Lihat tabel asli</summary>
+                <MarkdownView content={x.raw} priceDecimals={priceDecimals} />
+              </details>
+            </div>
+          );
+        }
+        const text = x.type === 'table' ? x.raw : x.text;
+        return text.trim() ? <MarkdownView key={i} content={text} priceDecimals={priceDecimals} /> : null;
+      })}
+    </>
+  );
+}
 
 // Navigasi cepat antar bagian hasil analisa. mode: jump | tab | accordion | off
-export default function SectionNav({ content, priceDecimals, mode = 'jump' }) {
+export default function SectionNav({ content, priceDecimals, mode = 'jump', onGuide }) {
   const parts = useMemo(() => splitSections(content), [content]);
   const [active, setActive] = useState(null); // bagian aktif (tab) / terakhir dipilih
   const [open, setOpen] = useState({}); // accordion
@@ -138,7 +173,7 @@ export default function SectionNav({ content, priceDecimals, mode = 'jump' }) {
               </button>
             )}
             <div className={visible ? '' : 'hidden print:block'}>
-              <MarkdownView content={s.body} priceDecimals={priceDecimals} />
+              <SectionBody body={s.body} n={s.n} priceDecimals={priceDecimals} onGuide={onGuide} />
             </div>
           </section>
         );
