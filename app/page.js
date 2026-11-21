@@ -30,6 +30,8 @@ const LS = {
   pair: 'aureus_pair',
   copyFmt: 'aureus_copyfmt',
   strict: 'aureus_strict',
+  mode: 'aureus_mode',
+  gwModel: 'aureus_gwmodel',
 };
 
 // Format digit tombol salin harga. 'ASLI' = apa adanya dari hasil analisa (bawaan).
@@ -77,6 +79,8 @@ export default function Home() {
   const [theme, setTheme] = useState('gold');
   const [navMode, setNavMode] = useState(NAV_DEFAULT);
   const [strict, setStrict] = useState(true);
+  const [mode, setMode] = useState('single');
+  const [gwModel, setGwModel] = useState('kimi-k2.7-code-highspeed');
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -125,6 +129,9 @@ export default function Home() {
       const nm = localStorage.getItem(NAV_KEY);
       if (nm && NAV_MODES.some((m) => m.key === nm)) setNavMode(nm);
       if (localStorage.getItem(LS.strict) === 'off') setStrict(false);
+      if (localStorage.getItem(LS.mode) === '2stage') setMode('2stage');
+      const gm = localStorage.getItem(LS.gwModel);
+      if (gm && /^[A-Za-z0-9._:\/-]{2,80}$/.test(gm)) setGwModel(gm);
       const cf = localStorage.getItem(LS.copyFmt);
       if (cf && COPY_FORMATS.some((f) => f.key === cf)) setCopyFmt(cf);
     } catch {}
@@ -446,7 +453,7 @@ export default function Home() {
           'Content-Type': 'application/json',
           ...(apiKey.trim() ? { 'x-gemini-key': apiKey.trim() } : {}),
         },
-        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict }),
+        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict, mode, gwModel }),
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || 'Gagal menganalisa.');
@@ -865,6 +872,25 @@ export default function Home() {
         onTheme={(k) => {
           setTheme(k);
           persist(THEME_KEY, k);
+        }}
+        mode={mode}
+        onMode={(v) => {
+          setMode(v);
+          persist(LS.mode, v === '2stage' ? '2stage' : '');
+        }}
+        gwModel={gwModel}
+        onGwModel={(v) => {
+          setGwModel(v);
+          persist(LS.gwModel, v);
+        }}
+        onTestGateway={async () => {
+          try {
+            const r = await apiFetch(`/api/health?gateway=1&model=${encodeURIComponent(gwModel)}`);
+            const j = await r.json().catch(() => ({}));
+            return typeof j.gateway === 'string' ? j.gateway : j.gateway ? `OK (${j.gateway.ms} ms): ${j.gateway.sample}` : r.status === 401 ? 'PIN salah/belum diisi' : `Tidak ada hasil (HTTP ${r.status})`;
+          } catch (e) {
+            return `ERROR: ${e?.message || 'jaringan'}`;
+          }
         }}
         strict={strict}
         onStrict={(v) => {

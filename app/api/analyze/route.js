@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { GEMINI_MODEL, buildSystemInstruction, buildUserPrompt, extractBias } from '@/lib/prompt';
-import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice } from '@/lib/pairs';
+import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice, resolvePair } from '@/lib/pairs';
+import { gatewayChat, gwConfigured, gwModelOf } from '@/lib/gateway';
+import { EXTRACT_SYSTEM, EXTRACT_SCHEMA, normalizeExtract, buildCandidates, formatDataBlock, STAGE2_ADDENDUM } from '@/lib/extract';
 import { requirePin } from '@/lib/auth';
 import { fixInlineTables } from '@/lib/markdownFix';
 import { buildFundamentalBlock } from '@/lib/calendar';
@@ -47,6 +49,8 @@ export async function POST(req) {
     const pairChoice = PAIR_ID_OK(body.pair) ? body.pair : 'AUTO';
     const fixedPair = pairChoice === 'AUTO' ? null : PAIRS[pairChoice];
     const strict = body.strict !== false; // Validator Zona & Konflik Order (Pengaturan), default ON
+    const wantTwoStage = body.mode === '2stage';
+    const gwModel = gwModelOf(body.gwModel);
 
     // Prioritas: key dari UI (header) -> env Vercel
     const apiKey = (req.headers.get('x-gemini-key') || '').trim() || process.env.GEMINI_API_KEY;
@@ -97,13 +101,76 @@ export async function POST(req) {
       },
     };
 
+    // ---- Mode 2 tahap (opsional): Gemini ekstrak JSON -> gateway menulis analisa ----
+    let two = null; // {text, model, ms1, ms2, dropped, cands}
+    let twoNote = '';
+    let twoSystem = '';
+    let twoUser = '';
+    const log = [];
+    if (wantTwoStage) {
+      if (!gwConfigured()) {
+        twoNote = 'Mode 2 tahap diminta, tetapi gateway belum dikonfigurasi di server; dijalankan dengan Gemini langsung.';
+      } else {
+        try {
+          const exParts = [{ text: 'Ekstrak data dari screenshot berikut sesuai skema.' }];
+          images.forEach((img, i) => {
+            exParts.push({ text: `Gambar ${i + 1} — ${labels[i]}` });
+            exParts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
+          });
+          const exPayload = {
+            systemInstruction: { parts: [{ text: EXTRACT_SYSTEM }] },
+            contents: [{ role: 'user', parts: exParts }],
+            generationConfig: { temperature: 0, maxOutputTokens: 6144, responseMimeType: 'application/json', responseSchema: EXTRACT_SCHEMA },
+          };
+          let data = null;
+          let exModel = null;
+          for (const m of ['gemini-flash-latest', GEMINI_MODEL]) {
+            const left = BUDGET_MS - (Date.now() - t0);
+            if (left < 30_000) break;
+            try {
+              const r = await fetch(`${BASE}/${m}:generateContent`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+                body: JSON.stringify(exPayload),
+                cache: 'no-store',
+                signal: AbortSignal.timeout(Math.min(25_000, left - 20_000)),
+              });
+              const j = await r.json().catch(() => ({}));
+              log.push(`tahap1 ${m}: ${r.status}`);
+              if (!r.ok) continue;
+              const raw = (j?.candidates?.[0]?.content?.parts || []).filter((x) => !x.thought).map((x) => x.text || '').join('').trim();
+              data = normalizeExtract(JSON.parse(raw.replace(/^```(?:json)?|```$/g, '').trim()));
+              exModel = m;
+              break;
+            } catch (e) {
+              log.push(`tahap1 ${m}: ${e?.name === 'TimeoutError' ? 'timeout' : e?.message}`);
+            }
+          }
+          const ms1 = Date.now() - t0;
+          if (!data) throw new Error('ekstraksi gagal');
+          const p2 = fixedPair || resolvePair(data.pair) || (data.lastPrice ? guessPairByPrice(data.lastPrice) : null);
+          const built = buildCandidates(data, p2);
+          twoSystem = buildSystemInstruction(fixedPair || p2, strict) + '\n' + STAGE2_ADDENDUM;
+          twoUser =
+            buildUserPrompt({ balance, risk, session, labels, pair: fixedPair || p2, fundamental: fundamental.text, strict }) +
+            '\n\n' + formatDataBlock(data, p2, built);
+          const left2 = BUDGET_MS - (Date.now() - t0);
+          const g = await gatewayChat({ model: gwModel, system: twoSystem, user: twoUser, timeoutMs: left2 - 2_000 });
+          log.push(`tahap2 ${gwModel}: ${g.ok ? 'ok ' + g.ms + 'ms' : g.error}`);
+          if (!g.ok) throw new Error(`gateway: ${g.error}`);
+          two = { text: g.text, model: gwModel, exModel, ms1, ms2: g.ms, dropped: built.dropped, cands: built.candidates.length };
+        } catch (e) {
+          twoNote = `Mode 2 tahap gagal (${String(e?.message || e).slice(0, 120)}); otomatis memakai Gemini langsung.`;
+        }
+      }
+    }
+
     // ---- Jalankan rantai percobaan ----
     let res = null;
     let json = {};
     let used = null;
-    const log = [];
 
-    for (const attempt of ATTEMPTS) {
+    for (const attempt of two ? [] : ATTEMPTS) {
       const elapsed = Date.now() - t0;
       const remaining = BUDGET_MS - elapsed;
       if (used === null && log.length > 0 && remaining < 8_000) break; // sisa waktu terlalu sedikit
@@ -131,6 +198,7 @@ export async function POST(req) {
       }
     }
 
+    if (two) used = { model: `2tahap:${two.model}` };
     if (!used) {
       const status = res?.status || 504;
       let msg = json?.error?.message || (res ? `HTTP ${status}` : 'Waktu habis menunggu Gemini.');
@@ -144,13 +212,15 @@ export async function POST(req) {
     }
 
     const candidate = json?.candidates?.[0];
-    const text = fixInlineTables(
-      (candidate?.content?.parts || [])
-        .filter((p) => !p.thought)
-        .map((p) => p.text || '')
-        .join('')
-        .trim()
-    );
+    const text = two
+      ? fixInlineTables(two.text)
+      : fixInlineTables(
+          (candidate?.content?.parts || [])
+            .filter((p) => !p.thought)
+            .map((p) => p.text || '')
+            .join('')
+            .trim()
+        );
 
     if (!text) {
       const reason =
@@ -197,21 +267,25 @@ export async function POST(req) {
     if (fixes.length && used && BUDGET_MS - (Date.now() - t0) > 24_000) {
       retried = true;
       try {
+        const corr =
+          'KOREKSI WAJIB: validator menemukan entry di luar rentang zona. Tulis ULANG analisa lengkap (format sama persis) dengan memperbaiki HANYA hal berikut; pilih level struktur nyata di dalam rentang, hitung ulang SL, TP, lot, risiko, R:R, dan samakan Bagian 3 dengan 4B:\n- ' +
+          fixes.join('\n- ');
+        let t2 = '';
+        if (two) {
+          const g2 = await gatewayChat({
+            model: two.model, system: twoSystem, user: corr,
+            history: [{ role: 'user', content: twoUser }, { role: 'assistant', content: text }],
+            timeoutMs: BUDGET_MS - (Date.now() - t0) - 1_000,
+          });
+          log.push(`retry-zona ${two.model}: ${g2.ok ? 'ok' : g2.error}`);
+          if (g2.ok) t2 = fixInlineTables(g2.text);
+        } else {
         const retryPayload = {
           ...basePayload,
           contents: [
             ...basePayload.contents,
             { role: 'model', parts: [{ text }] },
-            {
-              role: 'user',
-              parts: [
-                {
-                  text:
-                    'KOREKSI WAJIB: validator menemukan entry di luar rentang zona. Tulis ULANG analisa lengkap (format sama persis) dengan memperbaiki HANYA hal berikut; pilih level struktur nyata di dalam rentang, hitung ulang SL, TP, lot, risiko, R:R, dan samakan Bagian 3 dengan 4B:\n- ' +
-                    fixes.join('\n- '),
-                },
-              ],
-            },
+            { role: 'user', parts: [{ text: corr }] },
           ],
         };
         const rr = await fetch(`${BASE}/${used.model}:generateContent`, {
@@ -224,20 +298,21 @@ export async function POST(req) {
         const rj = await rr.json().catch(() => ({}));
         log.push(`retry-zona ${used.model}: ${rr.status}`);
         if (rr.ok) {
-          const t2 = fixInlineTables(
+          t2 = fixInlineTables(
             (rj?.candidates?.[0]?.content?.parts || [])
               .filter((p) => !p.thought)
               .map((p) => p.text || '')
               .join('')
               .trim()
           );
-          if (t2) {
-            const r2 = runChecks(t2);
-            // pakai hasil ulang hanya jika lebih baik (lebih sedikit pelanggaran)
-            if ((r2.guard.flags?.fix || []).length < fixes.length) {
-              ({ checked, markdown, guard } = r2);
-              finalText = t2;
-            }
+        }
+        }
+        if (t2) {
+          const r2 = runChecks(t2);
+          // pakai hasil ulang hanya jika lebih baik (lebih sedikit pelanggaran)
+          if ((r2.guard.flags?.fix || []).length < fixes.length) {
+            ({ checked, markdown, guard } = r2);
+            finalText = t2;
           }
         }
       } catch (e) {
@@ -247,7 +322,12 @@ export async function POST(req) {
 
     const notices = [];
     if (pairNote) notices.push(pairNote);
-    if (used.model !== GEMINI_MODEL) {
+    if (two) {
+      notices.push(`🧪 Mode 2 tahap: Gemini membaca gambar (${two.cands} kandidat level, ${two.dropped} angka sumbu dibuang) → \`${two.model}\` menulis analisa (${Math.round((two.ms1 + two.ms2) / 1000)} dtk). Eksperimental — bandingkan dengan mode Gemini langsung.`);
+    } else if (twoNote) {
+      notices.push(`⚠️ ${twoNote}`);
+    }
+    if (!two && used.model !== GEMINI_MODEL) {
       notices.push(`ℹ️ Kuota model utama habis, dijalankan otomatis dengan \`${used.model}\`.`);
     }
     if (fundamental.offline) {
@@ -272,6 +352,7 @@ export async function POST(req) {
       calendarOffline: Boolean(fundamental.offline),
       riskCorrections: checked.notes.length,
       strict,
+      mode: two ? '2stage' : 'single',
       zoneRetry: retried,
       orderGuard: { notes: guard.notes.length, cancel: guard.flags.cancel.length, shift: guard.flags.shift.length, skipped: guard.skipped },
       attempts: log,

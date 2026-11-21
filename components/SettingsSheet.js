@@ -5,7 +5,7 @@ import { THEMES } from '@/lib/themes';
 import { NAV_MODES } from '@/lib/sections';
 
 // Panel Pengaturan: bottom-sheet di HP, dialog di tablet/desktop. Berisi Tema & API Key.
-export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict }) {
+export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, onTestGateway }) {
   const [showKey, setShowKey] = useState(false);
   const panelRef = useRef(null);
 
@@ -68,6 +68,47 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
               );
             })}
           </div>
+        </section>
+
+        <section className="mb-5">
+          <h3 className="field-label">Mode Analisis</h3>
+          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Mode analisis">
+            {[
+              { k: 'single', t: 'Gemini langsung', d: 'Default. Satu panggilan, paling cepat & stabil.' },
+              { k: '2stage', t: '2 tahap (eksperimen)', d: 'Gemini baca gambar → model gateway menulis analisa.' },
+            ].map((m) => {
+              const on = mode === m.k;
+              return (
+                <button
+                  key={m.k}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => onMode(m.k)}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition ${on ? 'border-gold bg-gold/10 ring-1 ring-gold/50' : 'border-line bg-panel2 hover:border-gold/40'}`}
+                >
+                  <span className="block text-sm font-semibold">{m.t}</span>
+                  <span className="mt-0.5 block text-[11px] leading-snug text-muted">{m.d}</span>
+                </button>
+              );
+            })}
+          </div>
+          {mode === '2stage' ? (
+            <div className="mt-2">
+              <label className="field-label" htmlFor="gwmodel">Model tahap 2 (gateway)</label>
+              <input
+                id="gwmodel"
+                value={gwModel}
+                onChange={(e) => onGwModel(e.target.value.trim())}
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                className="w-full rounded-xl border border-line bg-panel2 px-3 py-2 text-sm"
+              />
+              <GatewayTest onTest={onTestGateway} />
+              <p className="mt-1 text-[11px] leading-snug text-muted">Bila tahap 1/2 gagal, otomatis kembali ke Gemini langsung. Lebih lambat (2 panggilan).</p>
+            </div>
+          ) : null}
         </section>
 
         <section className="mb-5">
@@ -146,6 +187,29 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
           Selesai
         </button>
       </div>
+    </div>
+  );
+}
+
+function GatewayTest({ onTest }) {
+  const [res, setRes] = useState('');
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setRes('');
+          setRes(await onTest());
+          setBusy(false);
+        }}
+        className="rounded-lg border border-line bg-panel2 px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+      >
+        {busy ? 'Menguji…' : 'Uji Gateway'}
+      </button>
+      {res ? <p className="mt-1 break-words text-[11px] text-muted">{res}</p> : null}
     </div>
   );
 }

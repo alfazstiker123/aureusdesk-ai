@@ -3,6 +3,7 @@ import { getSupabase, TABLE, BUCKET } from '@/lib/supabase';
 import { GEMINI_MODEL } from '@/lib/prompt';
 import { requirePin } from '@/lib/auth';
 import { getCalendar, calendarDebug } from '@/lib/calendar';
+import { gatewayChat, gwConfigured, gwModelOf } from '@/lib/gateway';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,6 +21,7 @@ export async function GET(req) {
     supabase: { table: null, bucket: null },
     gemini: null,
     calendar: null,
+    gateway: null,
   };
 
   try {
@@ -36,6 +38,16 @@ export async function GET(req) {
   if (searchParams.get('calendar') === '1') {
     const c = await getCalendar();
     out.calendar = { source: c.source, events: c.events.length, withActual: c.events.filter((e) => e.actual).length, fetchedAt: c.fetchedAt, stale: c.stale, error: c.error, fmpError: c.fmpError, fmp: calendarDebug() };
+  }
+  if (searchParams.get('gateway') === '1') {
+    const denied = requirePin(req);
+    if (denied) return denied;
+    if (!gwConfigured()) {
+      out.gateway = 'ERROR: env OPENAI_COMPAT_BASE_URL / OPENAI_COMPAT_API_KEY belum diisi';
+    } else {
+      const g = await gatewayChat({ model: gwModelOf(searchParams.get('model')), user: 'Balas satu kata: OK', maxTokens: 20, timeoutMs: 25000 });
+      out.gateway = g.ok ? { status: 'OK', model: gwModelOf(searchParams.get('model')), ms: g.ms, sample: g.text.slice(0, 80) } : `ERROR${g.status ? ' ' + g.status : ''}: ${g.error} (${g.ms}ms)`;
+    }
   }
   if (searchParams.get('gemini') === '1') {
     const denied = requirePin(req); // uji Gemini memakai kuota -> wajib PIN
