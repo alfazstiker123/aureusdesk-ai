@@ -188,3 +188,18 @@ test('fixWeekendExpiry: baris Masa Berlaku ditulis ulang walau Waktu Berakhir su
   assert.match(r.markdown, /Swing hingga 24 Nov 2026, 05.00 WIB/);
   assert.ok(!/Daily Close Senin/.test(r.markdown));
 });
+
+test('enforceSmcZones: nama timeframe (H4, M15) di Level Kunci tidak ikut diganti', () => {
+  const md = [
+    '| Timeframe | Struktur/Trend | Level Kunci | Catatan |',
+    '|---|---|---|---|',
+    '| H4 | BEARISH | 1.09678 (OB Bearish H4) | x |',
+    '| M15 | BEARISH | 1.09704 (OB Bearish M15), 1.0950 | y |',
+  ].join('\n');
+  const mk = (tf) => ({ status: 'OK', timeframe: tf, structureEvents: [{ level: 1.09678 }], swings: [], zones: [{ low: 1.09704, high: 1.09806 }], supports: [], resistances: [] });
+  const r = enforceSmcZones(md, { analyses: [mk('H4'), mk('M15')], atrH1: 0.00155, price: 1.09662, priceRe: /\d+(?:\.\d+)?/ });
+  assert.match(r.markdown, /OB Bearish H4\)/);
+  assert.match(r.markdown, /OB Bearish M15\)/);
+  assert.ok(!/OB Bearish H1\)|OB Bearish M1\)/.test(r.markdown));
+  assert.ok(!/\d,\d{3}/.test(r.markdown));
+});

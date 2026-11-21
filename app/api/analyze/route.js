@@ -415,6 +415,12 @@ export async function POST(req) {
     let json = {};
     let used = null;
 
+    // Jika AUTO terdeteksi di tahap ekstraksi tetapi gateway tahap 2 gagal, fallback Gemini langsung juga harus menerima OHLC yang sama
+    // (harus dikirim SEBELUM percobaan pertama, bukan sesudahnya).
+    if (!two && !resolvedPair && mt4ContextUsed?.snapshots?.length && mt4ContextUsed.text) {
+      parts.push({ text: mt4ContextUsed.text });
+      if (!marketInitial.snapshots?.length && basePayload.systemInstruction?.parts?.[0]) basePayload.systemInstruction.parts[0].text += SMC_SYSTEM_ADDENDUM;
+    }
     for (const attempt of two ? [] : ATTEMPTS) {
       const elapsed = Date.now() - t0;
       const remaining = BUDGET_MS - elapsed;
@@ -437,10 +443,6 @@ export async function POST(req) {
     }
 
     if (two) used = { model: `2tahap:${two.model}` };
-    // Jika AUTO terdeteksi di tahap ekstraksi tetapi gateway tahap 2 gagal, pastikan fallback Gemini langsung juga menerima OHLC yang sama.
-    if (!two && !resolvedPair && mt4ContextUsed?.snapshots?.length && mt4ContextUsed.text) {
-      parts.push({ text: mt4ContextUsed.text });
-    }
     if (!used) {
       const status = res?.status || 504;
       let msg = json?.error?.message || (res ? `HTTP ${status}` : 'Waktu habis menunggu Gemini.');
