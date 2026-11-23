@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { GEMINI_MODEL, GEMINI_FALLBACK_MODELS, buildSystemInstruction, buildUserPrompt, extractBias, zoneStyleAddendum } from '@/lib/prompt';
 import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice, resolvePair, parseATR, zoneRange, zoneRange3, rangeText } from '@/lib/pairs';
-import { gatewayChat, gwConfigured, gwModelOf } from '@/lib/gateway';
+import { gatewayChat, gwConfigured, gwModelOf, looksLikeAnalysis } from '@/lib/gateway';
 import { EXTRACT_SYSTEM, EXTRACT_SCHEMA, normalizeExtract, buildCandidates, formatDataBlock, STAGE2_ADDENDUM } from '@/lib/extract';
 import { requirePin } from '@/lib/auth';
 import { fixInlineTables } from '@/lib/markdownFix';
@@ -382,6 +382,7 @@ export async function POST(req) {
     };
 
     // ---- Mode 2 tahap (opsional): Gemini ekstrak JSON -> gateway menulis analisa ----
+    let gwDiag = '';
     let two = null; // {text, model, ms1, ms2, dropped, cands}
     let twoNote = '';
     let twoSystem = '';
@@ -401,7 +402,16 @@ export async function POST(req) {
       if (!g.ok) {
         return NextResponse.json({ error: `Model ${gwModel} gagal: ${g.error}. Matikan mode 2 tahap untuk memakai Gemini.` }, { status: 502 });
       }
-      two = { text: g.text, model: gwModel, exModel: null, ms1: 0, ms2: g.ms, dropped: 0, cands: 0, noShot: true };
+      let gOut = g;
+      if (!looksLikeAnalysis(gOut.text)) {
+        // Sebagian gateway mengabaikan role system / membalas basa-basi: coba sekali lagi dengan instruksi digabung ke pesan user.
+        const merged = `${twoSystem}\n\n=====\nTUGAS (ikuti FORMAT OUTPUT di atas, tulis analisa lengkap, bukan basa-basi):\n${twoUser}`;
+        const g2 = await gatewayChat({ model: gwModel, system: '', user: merged, timeoutMs: Math.max(5_000, BUDGET_MS - (Date.now() - t0) - 2_000) });
+        log.push(`oneshot-gateway-merged ${gwModel}: ${g2.ok ? 'ok ' + g2.ms + 'ms' : g2.error}`);
+        if (g2.ok && looksLikeAnalysis(g2.text)) gOut = g2;
+        else gwDiag = `diag: kirim ${g.sent} char, prompt_tokens=${g.usage?.prompt ?? '?'}, completion_tokens=${g.usage?.completion ?? '?'}, finish=${g.finish ?? '?'}`;
+      }
+      two = { text: gOut.text, model: gwModel, exModel: null, ms1: 0, ms2: gOut.ms, dropped: 0, cands: 0, noShot: true };
     } else if (wantTwoStage) {
       if (!gwConfigured()) {
         twoNote = 'Mode 2 tahap diminta, tetapi gateway belum dikonfigurasi di server; dijalankan dengan Gemini langsung.';
@@ -521,10 +531,9 @@ export async function POST(req) {
     // Model gateway kadang membalas sembarang teks (mis. kutipan/basa-basi). Tolak bila format analisa wajib tidak ada,
     // agar tidak diubah validator menjadi "NO TRADE" palsu.
     if (two && text) {
-      const tableRows = (text.match(/^\s*\|.*\|\s*$/gm) || []).length;
-      if (!/BIAS\s*UTAMA/i.test(text) || tableRows < 6) {
+      if (!looksLikeAnalysis(text)) {
         return NextResponse.json({
-          error: `Model ${two.model} tidak menghasilkan format analisa yang wajib (tanpa BIAS UTAMA/tabel). Cuplikan balasan: "${text.replace(/\s+/g, ' ').slice(0, 120)}". Coba model lain (mis. deepseek-v4-pro) atau pilih mesin Gemini di Pengaturan.`,
+          error: `Model ${two.model} tidak menghasilkan format analisa yang wajib (tanpa BIAS UTAMA/tabel). Cuplikan balasan: "${text.replace(/\s+/g, ' ').slice(0, 120)}". ${gwDiag ? ' ' + gwDiag + '.' : ''} Coba model lain atau pilih mesin Gemini di Pengaturan.`,
           code: 'BAD_MODEL_OUTPUT',
           attempts: log,
         }, { status: 502 });
