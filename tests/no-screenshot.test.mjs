@@ -24,6 +24,6 @@ test('prompt dengan screenshot tidak berubah', () => {
 });
 test('route: tanpa gambar hanya lolos untuk mt4 + pair tetap', () => {
   const src = fs.readFileSync(new URL('../app/api/analyze/route.js', import.meta.url), 'utf8');
-  assert.match(src, /marketSource === 'mt4' && !!fixedPair && !wantTwoStage/);
+  assert.match(src, /marketSource === 'mt4' && !!fixedPair/);
   assert.match(src, /noShot && !\(marketInitial\.snapshots\?\.length\)/);
 });

@@ -260,9 +260,9 @@ export async function POST(req) {
     }
 
     // Tanpa screenshot hanya untuk Sumber Data = MT4 EA dengan pair tetap (bukan AUTO) dan bukan mode 2-tahap.
-    const noShot = Array.isArray(images) && images.length === 0 && marketSource === 'mt4' && !!fixedPair && !wantTwoStage;
+    const noShot = Array.isArray(images) && images.length === 0 && marketSource === 'mt4' && !!fixedPair;
     if (!Array.isArray(images) || (images.length === 0 && !noShot)) {
-      return NextResponse.json({ error: 'Upload minimal 1 screenshot chart. (Tanpa screenshot hanya untuk Sumber Data MT4 EA + pair dipilih manual, bukan AUTO/2-tahap.)' }, { status: 400 });
+      return NextResponse.json({ error: 'Upload minimal 1 screenshot chart. (Tanpa screenshot hanya untuk Sumber Data MT4 EA + pair dipilih manual, bukan AUTO.)' }, { status: 400 });
     }
     if (images.length > MAX_IMAGES) {
       return NextResponse.json({ error: `Maksimal ${MAX_IMAGES} gambar per analisa.` }, { status: 400 });
@@ -382,7 +382,22 @@ export async function POST(req) {
     let twoSystem = '';
     let twoUser = '';
     const log = [];
-    if (wantTwoStage) {
+    if (wantTwoStage && noShot) {
+      // Tanpa screenshot: model gateway menulis analisa langsung dari OHLC MT4 (tidak ada tahap ekstraksi gambar).
+      if (!gwConfigured()) {
+        return NextResponse.json({ error: 'Model gateway belum dikonfigurasi di server (OPENAI_COMPAT_*). Matikan mode 2 tahap untuk memakai Gemini.' }, { status: 400 });
+      }
+      const pNo = fixedPair;
+      twoSystem = buildSystemInstruction(pNo, strict) + (zones === 3 ? zoneStyleAddendum(pNo) : '') + SMC_SYSTEM_ADDENDUM;
+      twoUser = buildUserPrompt({ balance, risk, session, labels, pair: pNo, fundamental: fundamental.text, strict }) +
+        weekendMappingBlock(pNo) + `\n\n${marketInitial.text}`;
+      const g = await gatewayChat({ model: gwModel, system: twoSystem, user: twoUser, timeoutMs: BUDGET_MS - (Date.now() - t0) - 2_000 });
+      log.push(`oneshot-gateway ${gwModel}: ${g.ok ? 'ok ' + g.ms + 'ms' : g.error}`);
+      if (!g.ok) {
+        return NextResponse.json({ error: `Model ${gwModel} gagal: ${g.error}. Matikan mode 2 tahap untuk memakai Gemini.` }, { status: 502 });
+      }
+      two = { text: g.text, model: gwModel, exModel: null, ms1: 0, ms2: g.ms, dropped: 0, cands: 0, noShot: true };
+    } else if (wantTwoStage) {
       if (!gwConfigured()) {
         twoNote = 'Mode 2 tahap diminta, tetapi gateway belum dikonfigurasi di server; dijalankan dengan Gemini langsung.';
       } else {
@@ -695,7 +710,8 @@ export async function POST(req) {
     if (pairNote) notices.push(pairNote);
     if (autoPairNote) notices.push(autoPairNote);
     if (two) {
-      notices.push(`🧪 Mode 2 tahap: Gemini membaca gambar (${two.cands} kandidat level, ${two.dropped} angka sumbu dibuang) → \`${two.model}\` menulis analisa (${Math.round((two.ms1 + two.ms2) / 1000)} dtk). Eksperimental — bandingkan dengan mode Gemini langsung.`);
+      if (two.noShot) notices.push(`🧪 Tanpa screenshot: model \`${two.model}\` menulis analisa langsung dari OHLC MT4 (${Math.round(two.ms2 / 1000)} dtk). Validator & keputusan server tetap berlaku.`);
+      else notices.push(`🧪 Mode 2 tahap: Gemini membaca gambar (${two.cands} kandidat level, ${two.dropped} angka sumbu dibuang) → \`${two.model}\` menulis analisa (${Math.round((two.ms1 + two.ms2) / 1000)} dtk). Eksperimental — bandingkan dengan mode Gemini langsung.`);
     } else if (twoNote) {
       notices.push(`⚠️ ${twoNote}`);
     }

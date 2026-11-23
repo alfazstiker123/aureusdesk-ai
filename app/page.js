@@ -461,9 +461,9 @@ export default function Home() {
   // ---- generate
   async function handleGenerate() {
     setError('');
-    const noShotOk = marketSource === 'mt4' && pair !== 'AUTO' && mode !== '2stage';
+    const noShotOk = marketSource === 'mt4' && pair !== 'AUTO';
     if (!images.length && !noShotOk) {
-      setError('Upload minimal 1 screenshot chart. Tanpa screenshot hanya bisa bila Sumber Data = MT4 EA, pair dipilih manual (bukan AUTO), dan mode bukan 2-tahap.');
+      setError('Upload minimal 1 screenshot chart. Tanpa screenshot hanya bisa bila Sumber Data = MT4 EA, pair dipilih manual (bukan AUTO).');
       return;
     }
     if (!(Number(balance) > 0)) {
