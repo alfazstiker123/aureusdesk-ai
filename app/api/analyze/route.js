@@ -518,6 +518,19 @@ export async function POST(req) {
             .trim()
         );
 
+    // Model gateway kadang membalas sembarang teks (mis. kutipan/basa-basi). Tolak bila format analisa wajib tidak ada,
+    // agar tidak diubah validator menjadi "NO TRADE" palsu.
+    if (two && text) {
+      const tableRows = (text.match(/^\s*\|.*\|\s*$/gm) || []).length;
+      if (!/BIAS\s*UTAMA/i.test(text) || tableRows < 6) {
+        return NextResponse.json({
+          error: `Model ${two.model} tidak menghasilkan format analisa yang wajib (tanpa BIAS UTAMA/tabel). Cuplikan balasan: "${text.replace(/\s+/g, ' ').slice(0, 120)}". Coba model lain (mis. deepseek-v4-pro) atau pilih mesin Gemini di Pengaturan.`,
+          code: 'BAD_MODEL_OUTPUT',
+          attempts: log,
+        }, { status: 502 });
+      }
+    }
+
     if (!text) {
       const reason =
         json?.promptFeedback?.blockReason || candidate?.finishReason || 'Respons kosong dari model.';

@@ -36,3 +36,9 @@ test('pemilihan model: engine gateway & model Gemini dibaca server', () => {
   const chat = fs.readFileSync(new URL('../app/api/chat/route.js', import.meta.url), 'utf8');
   assert.match(chat, /body\.engine === 'gateway'/);
 });
+
+test('balasan gateway tanpa format analisa ditolak (bukan NO TRADE palsu)', () => {
+  const src = fs.readFileSync(new URL('../app/api/analyze/route.js', import.meta.url), 'utf8');
+  assert.match(src, /BAD_MODEL_OUTPUT/);
+  assert.match(src, /tableRows < 6/);
+});
