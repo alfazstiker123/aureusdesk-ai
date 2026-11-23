@@ -293,12 +293,32 @@ function resolveId(name, models) {
   return hit ? hit.id : slug(name);
 }
 const TIER = { 1: 'Murah / cepat', 2: 'Menengah', 3: 'Tertinggi' };
+// Daftar model gateway milik user (ID persis, kelas & pengali biaya dari dashboard gateway).
+const MY_MODELS = [
+  ['deepseek-v4-pro', 'A', 1.15], ['deepseek-v4-flash', 'A', 2], ['deepseek-v4-flash-0731', 'A', 2], ['deepseek-v4-flash-vision-exp', 'A', 2.5], ['deepseek-v4-mod', 'A', 3],
+  ['deepseek-v4.1-flash', 'A', 2.56], ['deepseek-v4.1-flash-1017', 'A', 3], ['deepseek-v4.1-flash-1017-mod', 'A', 3.5], ['deepseek-v4.1-flash-mod', 'A', 3.2],
+  ['glm-5.2', 'B', 1.25], ['glm-5.2-mod', 'B', 3], ['glm-5.3', 'B', 2], ['glm-5.3-flash', 'B', 2], ['glm-5.3-flash-mod', 'B', 3.5],
+  ['kimi-k2.7-code', 'B', 1], ['kimi-k2.7-code-highspeed', 'B', 1.5], ['kimi-k2.8', 'B', 2],
+  ['mimo-v2.5-pro', 'B', 1.4], ['mimo-v2.6-flash', 'B', 2], ['mimo-v2.6-pro', 'B', 2],
+];
+
 function ModelPicker({ onLoad, current, onPick }) {
   const [state, setState] = useState(null);
   const [busy, setBusy] = useState(false);
   const models = state?.ok ? state.models : null;
   return (
     <div className="mt-2">
+      <div className="mb-2 rounded-xl border border-line p-2">
+        <p className="mb-1 text-[10px] text-muted">Model gateway Anda (ID persis; ×N = pengali biaya dari gateway). Ketuk untuk memilih.</p>
+        <div className="mb-2 flex flex-wrap gap-1">
+          {MY_MODELS.map(([id, cls, mult]) => (
+            <button key={id} type="button" onClick={() => onPick(id)}
+              className={`rounded-md border px-2 py-1 text-[11px] ${current === id ? 'border-gold bg-gold/10' : 'border-line bg-panel2'}`}>
+              {id} <span className="text-muted">{cls} ×{mult}</span>
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="mb-2 rounded-xl border border-line p-2">
         <p className="mb-1 text-[10px] text-muted">Pilihan cepat (murah → tertinggi, urutan perkiraan). ID ditebak dari nama; bila gagal, muat daftar model lalu pilih ID aslinya.</p>
         {[1, 2, 3].map((t) => (
