@@ -120,3 +120,53 @@ test('risiko: satu sumber angka; order zona terjauh tidak dipasang bila total > 
   assert.ok(z2.every((n) => !/0\.02 x/.test(n)), z2.join(' | '));
   assert.match(r.markdown, /\| Buy Limit Zona 2 \(Intraday\) \| 3583\.86 \| 3574\.28 \| 3600\.00 \| 9\.58 \| 0\.01 \| \$9\.58 \|/);
 });
+
+// ---- Fase 2: konfluensi zona ----
+import { zoneConfluence, zoneWeight, buildZoneCandidates3 } from '../lib/smc/engine.js';
+import { enforceSmcZones } from '../lib/smc/guard.js';
+
+const Z = (tf, kind, low, high, w) => ({ tf, kind, low, high, type: 'BULLISH', w });
+
+test('zona HTF sangat lebar tidak meminjamkan konfluensi; duplikat TF+jenis dihitung sekali', () => {
+  const unit = 21.34; // ATR H1
+  const small = Z('M15', 'FVG', 3577.48, 3583.86, 2);
+  const huge = Z('H4', 'FVG', 3472.72, 3600.96, 4); // 128 poin = 6 ATR H1
+  const dupe = Z('M15', 'FVG', 3578, 3584, 2);
+  const h1 = Z('H1', 'OB', 3580, 3590, 3);
+  const base = zoneConfluence(small, [small, huge], unit);
+  assert.equal(base.score, 2);
+  assert.deepEqual(base.mates, []);
+  assert.equal(zoneConfluence(small, [small, dupe], unit).score, 2);
+  const withH1 = zoneConfluence(small, [small, huge, dupe, h1], unit);
+  assert.equal(withH1.score, 5); // M15 (2) + H1 (3); H4 lebar & duplikat M15 diabaikan
+  assert.deepEqual(withH1.mates.map((m) => m.tf), ['H1']);
+  // zona lebar sendiri diskalakan turun, tidak di bawah 35%
+  assert.ok(zoneWeight(Z('H4', 'FVG', 0, 128, 4), unit) < 4 && zoneWeight(Z('H4', 'FVG', 0, 128, 4), unit) >= 4 * 0.35);
+  assert.equal(zoneWeight(Z('H1', 'OB', 0, 20, 3), unit), 3);
+});
+
+test('kandidat 3 zona: "dasar" tidak memuat zona HTF lebar', () => {
+  const an = [
+    { timeframe: 'M15', status: 'OK', zones: [{ type: 'BULLISH', low: 3577.48, high: 3583.86, source: 'FVG' }] },
+    { timeframe: 'H4', status: 'OK', zones: [{ type: 'BULLISH', low: 3480, high: 3600, source: 'FVG' }] }, // 120 poin = 5.6 ATR H1
+  ];
+  const r = buildZoneCandidates3(an, 3620.99, { z1: [2, 8], z2: [12, 54], z3: [50, 150] }, { h1: 21.34, m15: 5.95 });
+  assert.ok(r.res.BUY[2]);
+  assert.equal(r.res.BUY[2].src, 'M15 FVG'); // H4 FVG lebar tidak jadi konfluensi
+  assert.equal(r.res.BUY[2].score, 2);
+});
+
+test('guard: "Dasar" yang ditulis model diganti bukti mesin (tanpa MN FVG lebar)', () => {
+  const analyses = [
+    { timeframe: 'M15', status: 'OK', zones: [{ type: 'BULLISH', low: 3577.48, high: 3583.86, source: 'FVG' }] },
+    { timeframe: 'MN', status: 'OK', zones: [{ type: 'BULLISH', low: 3472.72, high: 3600.96, source: 'FVG' }] },
+  ];
+  const md = `| Zona & Strategi | Zona Entry | Stop Loss (SL) | TP1 | TP2 | Syarat Konfirmasi |
+|---|---|---|---|---|---|
+| BUY Zona 2 - Intraday (FVG M15) | 3577.48 - 3583.86 | 3574.28 | 3600.00 | 3612.00 | Engulfing bullish di M15 · Dasar: M15 FVG, MN FVG |
+`;
+  const r = enforceSmcZones(md, { analyses, atrH1: 21.34, price: 3620.99, priceRe: /\d{3,5}(?:\.\d+)?/ });
+  assert.match(r.markdown, /Dasar: M15 FVG\s*\|/);
+  assert.doesNotMatch(r.markdown, /MN FVG/);
+  assert.ok(r.notes.some((n) => /"Dasar" disamakan/.test(n)));
+});
