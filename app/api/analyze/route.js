@@ -8,6 +8,7 @@ import { fixInlineTables } from '@/lib/markdownFix';
 import { buildFundamentalBlock } from '@/lib/calendar';
 import { verifyRiskTables, fixDailyClose } from '@/lib/riskCheck';
 import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
+import { resolveBias, syncHeadlineBias, syncBiasLabels, syncTfBias, syncLevelLabels, syncExpiry } from '@/lib/consistency';
 import { getMarketSnapshots, marketContext, mt4SymbolForPair } from '@/lib/mt4Market';
 import { getCloudMarketSnapshots, cloudMarketContext, cloudProxyOf, applyBasis } from '@/lib/cloudMarket';
 import { metalsWeekendClosed, fmtMt4 } from '@/lib/marketTime';
@@ -536,6 +537,22 @@ export async function POST(req) {
           const tpFix = syncTargets(txt, { analyses: smcAnalyses, atrH1: atrH1v, price: feedPx || parseLastPrice(rawTxt, pairCfg) || 0, priceRe: pairCfg.priceRe });
           txt = tpFix.markdown;
           smcNotes = [...smcNotes, ...tpFix.notes];
+          // Konsistensi narasi vs mesin: bias, label arah, bias TF, nama Level Kunci, Waktu Berakhir (server menang atas Gemini)
+          const rb = resolveBias(extractBias(txt), mt4ContextUsed.smc?.higherBias);
+          if (rb.overridden) {
+            txt = syncHeadlineBias(txt, rb.bias);
+            smcNotes.push(`🧭 BIAS UTAMA ditulis ${rb.headline} oleh model, tetapi struktur H4 mesin ${rb.bias}; bias disamakan ke mesin.`);
+          }
+          for (const fix of [
+            (m) => syncBiasLabels(m, rb.bias),
+            (m) => syncTfBias(m, smcAnalyses),
+            (m) => syncLevelLabels(m, smcAnalyses, feedPx),
+            (m) => syncExpiry(m, new Date(), pairCfg),
+          ]) {
+            const r = fix(txt);
+            txt = r.markdown;
+            smcNotes = [...smcNotes, ...r.notes];
+          }
         } catch (err) {
           console.error('[analyze] smcGuard error:', err);
         }
@@ -694,7 +711,7 @@ export async function POST(req) {
 
     return NextResponse.json({
       markdown,
-      bias: extractBias(finalText),
+      bias: extractBias(markdown),
       pair: pairCfg ? pairCfg.id : null,
       model: used.model,
       calendarOffline: Boolean(fundamental.offline),
