@@ -162,6 +162,8 @@ function zoneCandidateData(smc, profile, price, zones = 2) {
 }
 
 async function loadMarketContext(pairId, sourceMode = 'cloud', zones = 2, opts = {}) {
+  // Produksi Headway: pair berproxy (XAUUSD) tidak boleh memakai Binance PAXG; paksa OHLC EA MT4.
+  if (process.env.DISABLE_CLOUD_PROXY === '1' && pairId && cloudProxyOf(pairId) && (sourceMode === 'cloud' || sourceMode === 'auto')) sourceMode = 'mt4';
   if (!pairId || sourceMode === 'screenshot') return { text: '', snapshots: [], smc: null, source: 'SCREENSHOT' };
   if (sourceMode === 'mt4') return loadMt4Context(pairId, zones);
   if (sourceMode === 'auto') {
@@ -321,7 +323,7 @@ export async function POST(req) {
       offline: true,
     }));
 
-    if (resolvedPair && !chartPrice && marketSource !== 'screenshot' && marketSource !== 'mt4' && cloudProxyOf(resolvedPair.id)) {
+    if (resolvedPair && !chartPrice && marketSource !== 'screenshot' && marketSource !== 'mt4' && cloudProxyOf(resolvedPair.id) && process.env.DISABLE_CLOUD_PROXY !== '1') {
       chartPrice = await readChartPrice(images, apiKey, t0).catch(() => 0);
     }
     const sane = (px, p) => (px > 0 && (!p?.priceRange || (px >= p.priceRange[0] && px <= p.priceRange[1])) ? px : 0);
