@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { resolveBias, syncHeadlineBias, syncBiasLabels, syncTfBias, syncLevelLabels, syncExpiry, describeLevel } from '../lib/consistency.js';
+import { resolveBias, syncHeadlineBias, syncBiasLabels, syncTfBias, syncLevelLabels, syncSummaryLevels, syncExpiry, describeLevel } from '../lib/consistency.js';
 
 // riskCheck.js memakai alias '@/lib/*'; salin ke folder sementara dengan path relatif agar bisa diuji tanpa bundler.
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rc-'));
@@ -303,4 +303,37 @@ test('INSUFFICIENT_DATA: data kurang bukan NO TRADE dan tidak mengeluarkan TRADE
   const md = insertDecision(D3, d.text);
   assert.ok(md.indexOf('DATA TIDAK CUKUP') < md.indexOf('Ringkasan Cepat'));
   assert.match(md, /^> ⚠️ \*\*KEPUTUSAN SERVER — ([^:*]+):\*\*/mu); // pola yang dibaca ResultView
+});
+
+test('Rincian Hitung Risiko ikut dikoreksi walau nama order disingkat (Z2) dan total arah diperbarui', () => {
+  const md = `### 4. Rekomendasi
+
+| Order | Harga Entry | Stop Loss | Take Profit | Jarak SL | Lot Aman | Risiko ($) | R:R | Waktu Berakhir (WIB) |
+|---|---|---|---|---|---|---|---|---|
+| Sell Limit Zona 2 (Intraday Supply H1/H4) (Counter-Trend) | 3710.52 | 3728.41 | 3657.17 | 17.89 | 0.01 | $17.89 | 1:2.98 | 24 Nov 2026, 06.16 WIB |
+| Buy Limit Zona 2 (Intraday OB/FVG H1) (Searah Bias) | 3627.55 | 3608.41 | 3675.94 | 19.14 | 0.01 | $19.14 | 1:2.53 | 24 Nov 2026, 06.16 WIB |
+
+**Rincian Hitung Risiko**
+- Sell Limit Z2: 0.01 x 17.89 x 100 = $1.79
+- Buy Limit Z2: 0.01 x 19.14 x 100 = $1.91
+- Total BUY: $6.85 (<= $20 batas per arah) | Total SELL: $2.92 (<= $20).
+
+**Skenario Batal**
+- x
+`;
+  const r = verifyRiskTables(md, 20, PAIRS.XAUUSD, NOW, { last: 3665.67, capPerDirection: true, zones: 2 });
+  assert.match(r.markdown, /Sell Limit Z2: 0\.01 lot x 17\.89 x 100 = \$17\.89/);
+  assert.match(r.markdown, /Buy Limit Z2: 0\.01 lot x 19\.14 x 100 = \$19\.14/);
+  assert.match(r.markdown, /Total BUY: \$19\.14 .*\| Total SELL: \$17\.89/);
+  assert.doesNotMatch(r.markdown, /\$1\.79|\$6\.85/);
+});
+
+test('syncSummaryLevels: TF salah pada Level kunci Ringkasan Cepat dikoreksi, TF benar dibiarkan', () => {
+  const mk = (tf, res) => ({ status: 'OK', timeframe: tf, structureEvents: [], swings: [], zones: [], supports: [], resistances: res.map((p) => ({ price: p })) });
+  const analyses = [mk('M15', [3675.94, 3689.62]), mk('H1', [3689.62]), mk('M5', [3675.14, 3675.94])];
+  const md = '> - 📍 Level kunci: 3675.94 (resistance swing H1), 3689.62 (resistance H1).';
+  const r = syncSummaryLevels(md, analyses, 3665.67);
+  assert.match(r.markdown, /3675\.94 \(Swing High utuh M15\)/);
+  assert.match(r.markdown, /3689\.62 \(resistance H1\)/);
+  assert.equal(r.notes.length, 1);
 });

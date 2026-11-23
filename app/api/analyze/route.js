@@ -9,7 +9,7 @@ import { buildFundamentalBlock } from '@/lib/calendar';
 import { verifyRiskTables, fixDailyClose } from '@/lib/riskCheck';
 import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
 import { buildDecision, insertDecision, insufficientDecision, dataGap } from '@/lib/decision';
-import { resolveBias, syncHeadlineBias, syncBiasLabels, syncTfBias, syncLevelLabels, syncExpiry } from '@/lib/consistency';
+import { resolveBias, syncHeadlineBias, syncBiasLabels, syncTfBias, syncLevelLabels, syncSummaryLevels, syncExpiry } from '@/lib/consistency';
 import { getMarketSnapshots, marketContext, mt4SymbolForPair } from '@/lib/mt4Market';
 import { getCloudMarketSnapshots, cloudMarketContext, cloudProxyOf, applyBasis } from '@/lib/cloudMarket';
 import { metalsWeekendClosed, fmtMt4 } from '@/lib/marketTime';
@@ -242,7 +242,11 @@ export async function POST(req) {
       return NextResponse.json({ error: 'Body request tidak valid.' }, { status: 400 });
     }
 
-    const { images = [], balance = 0, risk = 2, session = '' } = body;
+    const { images = [], balance = 0, risk = 2 } = body;
+    // Sesi dihitung dari jam WIB server (bukan isian UI yang bisa basi): 06-14 Asia, 14-19 Eropa, selebihnya New York.
+    const wibHour = Number(new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Jakarta' }).format(new Date()));
+    const session = wibHour >= 6 && wibHour < 14 ? 'Sesi Asia' : wibHour >= 14 && wibHour < 19 ? 'Sesi Eropa' : 'Sesi New York';
+    const sessionUi = String(body.session || '').trim();
     const pairChoice = PAIR_ID_OK(body.pair) ? body.pair : 'AUTO';
     const fixedPair = pairChoice === 'AUTO' ? null : PAIRS[pairChoice];
     const strict = body.strict !== false; // Validator Zona & Konflik Order (Pengaturan), default ON
@@ -600,6 +604,7 @@ export async function POST(req) {
             (m) => syncBiasLabels(m, rb.bias),
             (m) => syncTfBias(m, smcAnalyses),
             (m) => syncLevelLabels(m, smcAnalyses, feedPx),
+            (m) => syncSummaryLevels(m, smcAnalyses, feedPx),
             (m) => syncExpiry(m, new Date(), pairCfg),
           ]) {
             const r = fix(txt);
@@ -701,13 +706,22 @@ export async function POST(req) {
     }
     // Keputusan server (dari tabel final + skor mesin): TRADE / COUNTERTREND_ONLY / NO_TRADE; data kurang = INSUFFICIENT_DATA (bukan "tidak ada peluang")
     let decision = null;
+    let htfNote = '';
     if (markdown) {
       try {
         const gap = dataGap({ hasSnapshots: !!mt4ContextUsed?.snapshots?.length, analyses: mt4ContextUsed?.smc?.analyses, priceMismatch: mt4Status === 'PRICE_MISMATCH' });
         if (gap) decision = insufficientDecision(gap);
         else {
           const rb = resolveBias(extractBias(markdown), mt4ContextUsed.smc?.higherBias);
-          decision = buildDecision({ markdown, bias: rb.bias, zoneRes: mt4ContextUsed.zoneRes, alignment: mt4ContextUsed.smc?.alignment ?? null });
+          const anl = mt4ContextUsed.smc?.analyses || [];
+          const biasOf = (tf) => anl.find((x) => x.timeframe === tf && x.status === 'OK')?.bias;
+          decision = buildDecision({ markdown, bias: rb.bias, zoneRes: mt4ContextUsed.zoneRes, alignment: mt4ContextUsed.smc?.alignment ?? null,
+            htf: { D1: biasOf('D1'), W1: biasOf('W1') }, atrM5: Number(anl.find((x) => x.timeframe === 'M5' && x.status === 'OK')?.atr14) || 0 });
+          if (decision.htfConflict) {
+            const before = markdown;
+            markdown = markdown.replace(/(keyakinan\s*:?\s*\**\s*)(?:Sedang\s*-\s*Tinggi|Tinggi)/gi, '$1Sedang');
+            if (markdown !== before) htfNote = '🎚 Keyakinan diturunkan ke Sedang: bias H4/H1 melawan D1/W1.';
+          }
         }
         markdown = insertDecision(markdown, decision.text);
       } catch (e) {
@@ -717,6 +731,7 @@ export async function POST(req) {
     // Reviewer OpenAI sengaja tidak dijalankan pada jalur live V2: menjaga batas waktu dan fokus pada validator deterministik.
 
     const notices = [];
+    if (htfNote) notices.push(htfNote);
     if (mt4Status === 'OHLC_HYBRID' && mt4Report?.analyses?.length) {
       notices.push(`📡 Data Hybrid aktif: OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'Cloud' : 'MT4 EA'} diterima dan lolos pemeriksaan. SMC dihitung deterministik dari candle tertutup; bukan probabilitas profit.`);
       markdown = `> 📡 **V2 — OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'CLOUD' : 'MT4'} + SMC**\n> Sumber: ${mt4ContextUsed.source === 'CLOUD' ? `${mt4ContextUsed.provider || 'Cloud'} (feed exchange publik, bukan broker Anda)` : 'MT4 EA'}. Cocokkan harga dengan chart broker sebelum menggunakan level.\n\n${mt4Report.compactBlock}\n\n---\n\n${markdown}\n\n---\n\n### Lampiran: Detail SMC dari candle (referensi)\n\n\`\`\`text\n${mt4ContextUsed.zoneCandidates ? mt4ContextUsed.zoneCandidates + '\n\n' : ''}${mt4Report.promptBlock}\n\`\`\``;
@@ -730,6 +745,7 @@ export async function POST(req) {
     }
     if (zones === 3 && !strict) notices.push('🧭 Gaya zona: 3 zona (Scalping/Intraday/Swing). ⚠️ Validator Zona MATI: zona/arah order tidak dicek server — aktifkan di Pengaturan agar order di luar OB/FVG dibatalkan.');
     else notices.push(`🧭 Gaya zona: ${zones === 3 ? '3 zona (Scalping/Intraday/Swing)' : '2 zona (Intraday/Swing) — ubah di Pengaturan → Gaya Zona'}.`);
+    if (sessionUi && sessionUi !== session) notices.push(`🕒 Sesi dihitung dari jam server WIB (${session}); isian Sesi di UI (${sessionUi}) diabaikan.`);
     if (mt4ContextUsed?.proxyNote) notices.push(mt4ContextUsed.proxyNote);
     { const sc = Object.entries(mt4ContextUsed?.scrub || {}); if (sc.length) notices.push(`🧹 Feed data: candle outlier dibersihkan sebelum SMC/ATR (${sc.map(([k, v]) => `${k}: ${v.dropped ? v.dropped + ' dibuang' : ''}${v.dropped && v.clamped ? ', ' : ''}${v.clamped ? v.clamped + ' wick dipotong' : ''}`).join('; ')}).`); }
     if (weekendMap && !pairCfg?.open24x7) notices.push(`🗓️ Pasar ${(resolvedPair || fixedPair)?.id || pairCfg?.id || 'forex/emas'} sedang tutup akhir pekan: ini MAPPING untuk pembukaan ${fmtMt4(nextOpenMs(pairCfg || resolvedPair || fixedPair, Date.now()), 7)} WIB. Harga Terakhir = close Jumat; cek gap pembukaan sebelum memasang order.`);

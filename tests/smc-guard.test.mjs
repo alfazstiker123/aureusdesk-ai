@@ -165,7 +165,7 @@ test('syncTargets: kolom TP 4B disamakan dengan TP1 Bagian 3', () => {
     '| Sell Limit Zona 1 | 1.09625 | 1.09685 | 1.09450 | 0.00060 | 0.06 | $3.60 | 1:2.92 | x |',
   ].join('\n');
   const analyses = [{ status: 'OK', timeframe: 'H1', zones: [], supports: [], resistances: [] }];
-  const r = syncTargets(md, { analyses, atrH1: 0.00155, price: 1.09532, priceRe: /\d+(?:\.\d+)?/ });
+  const r = syncTargets(md, { analyses, atrH1: 0.00155, price: 1.09560, priceRe: /\d+(?:\.\d+)?/ });
   const row4b = r.markdown.split('\n')[6];
   assert.ok(row4b.includes('| 1.09532 |'), row4b);
   assert.ok(!r.markdown.includes('1.09450'));
@@ -202,4 +202,30 @@ test('enforceSmcZones: nama timeframe (H4, M15) di Level Kunci tidak ikut digant
   assert.match(r.markdown, /OB Bearish M15\)/);
   assert.ok(!/OB Bearish H1\)|OB Bearish M1\)/.test(r.markdown));
   assert.ok(!/\d,\d{3}/.test(r.markdown));
+});
+
+test('syncTargets: TP1 = harga sekarang diganti level struktur (kasus BUY Z1 audit)', () => {
+  const md = [
+    '| Zona & Strategi | Zona Entry | Stop Loss (SL) | Take Profit 1 (TP1) | Take Profit 2 (TP2) | Syarat |',
+    '|---|---|---|---|---|---|',
+    '| BUY Zona 1 - Scalping (Searah Bias) | 3617.45 - 3631.20 | 3608.71 | 3665.67 | 3679.17 | x |',
+  ].join('\n');
+  const analyses = [{ status: 'OK', timeframe: 'M15', zones: [], supports: [], resistances: [{ price: 3675.14 }, { price: 3675.94 }, { price: 3689.62 }] }];
+  const r = syncTargets(md, { analyses, atrH1: 20.37, price: 3665.67, priceRe: /\d+(?:\.\d+)?/ });
+  const tp1 = Number(r.markdown.split('\n')[2].split('|')[4]);
+  assert.notEqual(tp1, 3665.67);
+  assert.ok(tp1 > 3668 && tp1 <= 3675.14, `TP1 ${tp1}`);
+  assert.ok(r.markdown.includes('3608.71') && r.markdown.includes('3617.45 - 3631.20'));
+});
+
+test('enforceSmcZones: tepi bersama dua rentang Level Kunci tidak meninggalkan "-" menggantung', () => {
+  const md = [
+    '| Timeframe | Struktur/Trend | Level Kunci | Catatan |',
+    '|---|---|---|---|',
+    '| M15 | BULLISH | 3614.73-3627.55 (OB Bullish M15 fresh); 3627.55-3645.89 (FVG Bullish M15 fresh) | x |',
+  ].join('\n');
+  const a = { status: 'OK', timeframe: 'M15', structureEvents: [], swings: [], zones: [{ low: 3614.73, high: 3627.55 }, { low: 3627.55, high: 3645.89 }], supports: [], resistances: [] };
+  const r = enforceSmcZones(md, { analyses: [a], atrH1: 20.37, price: 3665.67, priceRe: /\d+(?:\.\d+)?/ });
+  assert.ok(!/;\s*-\d/.test(r.markdown), r.markdown);
+  assert.match(r.markdown, /3627\.55-3645\.89/);
 });
