@@ -24,6 +24,8 @@ input int    ManualUtcOffsetHours = 2;      // cadangan saat pasar tutup / auto 
 //--- pengaman harga
 input double MaxBidCloseDiffPct  = 3.0;     // BATAS KERAS bid vs close (anti salah simbol). Toleransi sebenarnya adaptif: max(4xATR14, 10xspread, 0.05%)
 input bool   ShowStatusOnChart   = true;
+//--- diagnostik (verifikasi data vs chart MT4)
+input bool   DiagnosticLog       = true;    // log SHIFT 0 (berjalan) & SHIFT 1 (selesai) tiap TF di tab Experts, saat init & tiap kirim
 
 #define TF_COUNT 6
 int      g_periods[TF_COUNT] = {PERIOD_M5, PERIOD_M15, PERIOD_H1, PERIOD_H4, PERIOD_D1, PERIOD_W1};
@@ -130,6 +132,93 @@ double BidCloseTolerance(MqlRates &r[], int n, double bid, double ask, int tfIdx
    return MathMin(tol, close * MaxBidCloseDiffPct / 100.0);
 }
 
+
+//=== DIAGNOSTIK & VERIFIKASI DATA ==================================
+//    SHIFT 0 = candle berjalan (TIDAK dikirim). SHIFT 1 = candle terakhir yang sudah selesai (dikirim).
+//    Dibaca lewat iTime/iOpen/iHigh/iLow/iClose = sumber INDEPEN dari CopyRates yang dipakai untuk payload,
+//    sehingga selisih keduanya terdeteksi sebagai DATA_MISMATCH.
+#define DATA_VALID    "DATA_VALID"
+#define DATA_STALE    "DATA_STALE"
+#define DATA_MISMATCH "DATA_MISMATCH"
+
+int MaxAgeMinutes(int i)
+{
+   switch(i)
+   {
+      case 0: return 20;      // M5
+      case 1: return 45;      // M15
+      case 2: return 180;     // H1
+      case 3: return 600;     // H4
+      case 4: return 7200;    // D1
+   }
+   return 21600;              // W1 (sama dengan server: lib/mt4Market.js)
+}
+
+void LogShift(int i, int shift, datetime t, double o, double h, double l, double c, int digits, int off)
+{
+   Print("AureusDesk DIAG | symbol=", g_sym, " | tf=", g_names[i], " | shift=", shift, (shift == 0 ? " (BERJALAN, tidak dikirim)" : " (SELESAI, dikirim)"),
+         " | bar=", TimeToString(t, TIME_DATE | TIME_SECONDS), " server / ", TimeToString(t - off, TIME_DATE | TIME_SECONDS), " UTC",
+         " | O=", DoubleToString(o, digits), " H=", DoubleToString(h, digits), " L=", DoubleToString(l, digits), " C=", DoubleToString(c, digits));
+}
+
+string BarFragment(datetime tUtc, double o, double h, double l, double c, int digits)
+{
+   return "{\"time\":" + IntegerToString((int)tUtc) + ",\"open\":" + DoubleToString(o, digits) + ",\"high\":" + DoubleToString(h, digits)
+        + ",\"low\":" + DoubleToString(l, digits) + ",\"close\":" + DoubleToString(c, digits) + ",";
+}
+
+//--- verifikasi satu TF. r[] = hasil CopyRates (lama -> baru, mulai shift 1). Mengembalikan DATA_VALID / DATA_STALE / DATA_MISMATCH.
+//    D1/W1: tidak membandingkan close antar-TF; hanya timestamp & OHLC candle masing-masing.
+string DiagCheck(int i, MqlRates &r[], int n, int off, int digits, string &detail)
+{
+   int per = g_periods[i];
+   detail = "";
+   datetime t0 = iTime(g_sym, per, 0), t1 = iTime(g_sym, per, 1);
+   double o0 = iOpen(g_sym, per, 0), h0 = iHigh(g_sym, per, 0), l0 = iLow(g_sym, per, 0), c0 = iClose(g_sym, per, 0);
+   double o1 = iOpen(g_sym, per, 1), h1 = iHigh(g_sym, per, 1), l1 = iLow(g_sym, per, 1), c1 = iClose(g_sym, per, 1);
+   if(DiagnosticLog)
+   {
+      LogShift(i, 0, t0, o0, h0, l0, c0, digits, off);
+      LogShift(i, 1, t1, o1, h1, l1, c1, digits, off);
+   }
+   double eps = MathPow(10.0, -digits) * 0.5;
+   if(t0 <= 0 || t1 <= 0) detail = "iTime kosong (riwayat belum termuat)";
+   else if(t0 <= t1) detail = "timestamp shift0 <= shift1";
+   else if(n < 1 || r[n - 1].time != t1) detail = "CopyRates terbaru (" + TimeToString(r[n - 1].time, TIME_DATE | TIME_MINUTES) + ") != iTime shift1 (" + TimeToString(t1, TIME_DATE | TIME_MINUTES) + ")";
+   else if(r[n - 1].time >= t0) detail = "candle berjalan ikut terbaca di data kirim";
+   else if(MathAbs(r[n - 1].open - o1) > eps || MathAbs(r[n - 1].high - h1) > eps || MathAbs(r[n - 1].low - l1) > eps || MathAbs(r[n - 1].close - c1) > eps)
+      detail = "OHLC CopyRates != iOpen/iHigh/iLow/iClose shift1";
+   else if(h1 < MathMax(o1, MathMax(c1, l1)) - eps || l1 > MathMin(o1, MathMin(c1, h1)) + eps || MathMin(MathMin(o1, h1), MathMin(l1, c1)) <= 0)
+      detail = "integritas OHLC shift1 gagal";
+   if(detail != "") { if(DiagnosticLog) Print("AureusDesk DIAG | ", g_names[i], " ", DATA_MISMATCH, ": ", detail); return DATA_MISMATCH; }
+
+   // kedaluwarsa: sama dengan server (umur dihitung dari jam NYATA, bukan TimeCurrent yang beku saat pasar tutup)
+   datetime nowSrv = TimeGMT() + off;
+   long ageMin = (long)(nowSrv - t1) / 60;
+   long maxAge = MaxAgeMinutes(i);
+   bool quietMarket = (nowSrv - TimeCurrent()) > 600; // tidak ada tick baru >10 menit: pasar tutup / jeda
+   if(quietMarket && (StringFind(g_sym, "XAU") == 0 || StringFind(g_sym, "XAG") == 0)) maxAge = MathMax(maxAge, 80 * 60);
+   if(ageMin > maxAge || ageMin < -5)
+   {
+      detail = "umur candle shift1 " + IntegerToString((int)ageMin) + " mnt > batas " + IntegerToString((int)maxAge) + " mnt";
+      if(DiagnosticLog) Print("AureusDesk DIAG | ", g_names[i], " ", DATA_STALE, ": ", detail);
+      return DATA_STALE;
+   }
+   return DATA_VALID;
+}
+
+//--- payload harus memuat persis candle shift1 hasil iXxx (dan TIDAK memuat candle shift0)
+string PayloadCheck(int i, string payload, int off, int digits)
+{
+   int per = g_periods[i];
+   datetime t0 = iTime(g_sym, per, 0), t1 = iTime(g_sym, per, 1);
+   string want = BarFragment(t1 - off, iOpen(g_sym, per, 1), iHigh(g_sym, per, 1), iLow(g_sym, per, 1), iClose(g_sym, per, 1), digits);
+   if(StringFind(payload, want) < 0) return "payload tidak memuat candle shift1 persis seperti dibaca EA";
+   if(StringFind(payload, "{\"time\":" + IntegerToString((int)(t0 - off)) + ",") >= 0) return "payload memuat candle berjalan (shift0)";
+   if(StringFind(payload, "\"timeframe\":\"" + g_names[i] + "\"") < 0) return "timeframe payload salah";
+   return "";
+}
+
 //--- kirim satu timeframe. Mengembalikan true bila sukses.
 bool SendTf(int i)
 {
@@ -154,6 +243,16 @@ bool SendTf(int i)
    double bid    = MarketInfo(g_sym, MODE_BID);
    double ask    = MarketInfo(g_sym, MODE_ASK);
    double lastClose = rates[copied - 1].close;
+
+   // Verifikasi data (shift0/shift1) sebelum kirim; MISMATCH/STALE tidak dikirim
+   string vDetail = "";
+   string verdict = DiagCheck(i, rates, copied, off, digits, vDetail);
+   if(verdict != DATA_VALID)
+   {
+      SetStatus(i, verdict + ": " + vDetail + " (tidak dikirim)");
+      Print("AureusDesk ", verdict, " ", g_sym, " ", g_names[i], ": ", vDetail);
+      return false;
+   }
 
    // PRICE MISMATCH: harga bid harus dekat dengan close candle tertutup (hanya TF pendek)
    double tolPx = (i <= 2 && bid > 0 && lastClose > 0) ? BidCloseTolerance(rates, copied, bid, ask, i) : 0;
@@ -181,6 +280,14 @@ bool SendTf(int i)
                   + ",\"bid\":" + DoubleToString(bid, digits) + ",\"ask\":" + DoubleToString(ask, digits)
                   + ",\"digits\":" + IntegerToString(digits) + ",\"bars\":" + bars + "}";
 
+   string pErr = PayloadCheck(i, payload, off, digits);
+   if(pErr != "")
+   {
+      SetStatus(i, DATA_MISMATCH + ": " + pErr + " (tidak dikirim)");
+      Print("AureusDesk ", DATA_MISMATCH, " ", g_sym, " ", g_names[i], ": ", pErr);
+      return false;
+   }
+
    char   data[], result[];
    string headers = "Content-Type: application/json\r\nAuthorization: Bearer " + BridgeSecret + "\r\n";
    StringToCharArray(payload, data, 0, WHOLE_ARRAY, CP_UTF8);
@@ -192,7 +299,7 @@ bool SendTf(int i)
    {
       g_lastBar[i]    = newestUtc;
       g_lastUpload[i] = TimeLocal();
-      SetStatus(i, "OK " + IntegerToString(copied) + " bar, close " + DoubleToString(lastClose, digits) + ", candle UTC " + TimeToString(newestUtc, TIME_DATE | TIME_MINUTES));
+      SetStatus(i, DATA_VALID + " | OK " + IntegerToString(copied) + " bar, close " + DoubleToString(lastClose, digits) + ", candle UTC " + TimeToString(newestUtc, TIME_DATE | TIME_MINUTES));
       Print("AureusDesk bridge OK ", g_sym, " ", g_names[i], " bars=", copied, " lastClose=", DoubleToString(lastClose, digits));
       return true;
    }
@@ -250,6 +357,24 @@ int OnInit()
    }
    g_offsetUsed = ServerUtcOffsetSec();
    EventSetTimer(MathMax(10, SendEverySeconds));
+   if(DiagnosticLog)
+   {
+      for(int k = 0; k < TF_COUNT; k++)
+      {
+         if(!Enabled(k)) continue;
+         MqlRates rr[];
+         ArraySetAsSeries(rr, false);
+         int cc = CopyRates(g_sym, g_periods[k], 1, 40, rr);
+         int dg = (int)MarketInfo(g_sym, MODE_DIGITS);
+         string dd = "";
+         if(cc >= 1)
+         {
+            string vv = DiagCheck(k, rr, cc, g_offsetUsed, dg, dd);
+            Print("AureusDesk DIAG INIT | ", g_names[k], " => ", vv, (dd != "" ? " (" + dd + ")" : ""));
+         }
+         else Print("AureusDesk DIAG INIT | ", g_names[k], ": CopyRates=", cc, " (buka chart TF ini sekali agar riwayat termuat)");
+      }
+   }
    Print("AureusDesk bridge v3.1 aktif: ", g_sym, ", offset server ", g_offsetUsed / 3600, "j (", g_offsetMode, "), tanpa fungsi trading.");
    ShowStatus();
    return INIT_SUCCEEDED;

@@ -24,3 +24,12 @@ EA hanya MENGIRIM OHLC candle tertutup. Tidak ada OrderSend/OrderClose/OrderModi
 ## D. Pesan error
 - HTTP 401: BridgeSecret salah. err 4060: URL belum di Allow WebRequest. "PRICE MISMATCH": bid beda jauh dari close melebihi toleransi adaptif ATR/spread (maks 3%; cek simbol). "DATA TIDAK CUKUP ... UTC": offset waktu salah, atur ManualUtcOffsetHours dan AutoUtcOffset=false.
 - Akhir pekan: data Jumat tetap diterima saat pasar tutup.
+
+
+## Verifikasi data v3.1 (diagnostik shift 0 / shift 1)
+Setelah compile (F7) dan pasang EA, buka tab **Experts**. Tiap TF (M5, M15, H1, H4, D1, W1) mencetak dua baris `AureusDesk DIAG`:
+- `shift=0 (BERJALAN, tidak dikirim)` = candle yang sedang terbentuk, harus sama dengan candle paling kanan di chart.
+- `shift=1 (SELESAI, dikirim)` = candle tertutup terakhir, harus sama dengan candle tepat di kirinya.
+Isi baris: symbol, TF, shift, waktu bar (server dan UTC), O/H/L/C. Cocokkan dengan Data Window (Ctrl+D) di MT4.
+Status per TF di chart/log: `DATA_VALID` (lolos, dikirim), `DATA_STALE` (candle kedaluwarsa, tidak dikirim), `DATA_MISMATCH` (data EA tidak cocok dengan pembacaan MT4 atau payload, tidak dikirim).
+Matikan log dengan input `DiagnosticLog=false`.
