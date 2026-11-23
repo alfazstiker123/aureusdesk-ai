@@ -11,7 +11,7 @@ const QUICK = [
 
 const HELLO = 'Halo Trader! 👋 Saya Mentor SMC. Tanyakan soal setup, hitung ulang lot, konfirmasi candle, atau skenario batal dari analisa aktif Anda.';
 
-export default function ChatBox({ apiFetch, apiKey, context, pair, balance, risk, gwModel, open, onToggle }) {
+export default function ChatBox({ apiFetch, apiKey, context, pair, balance, risk, gwModel, engine = 'gemini', geminiModel = '', open, onToggle }) {
   const [msgs, setMsgs] = useState([]);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -40,6 +40,8 @@ export default function ChatBox({ apiFetch, apiKey, context, pair, balance, risk
           balance: Number(balance),
           risk: Number(risk),
           gwModel,
+          engine,
+          geminiModel,
         }),
       });
       const raw2 = await res.text();

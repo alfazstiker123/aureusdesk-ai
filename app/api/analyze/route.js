@@ -28,7 +28,8 @@ const MAX_IMAGES = 12;
 const BUDGET_MS = 52_000; // total waktu semua percobaan (di bawah maxDuration)
 
 // Urutan percobaan (tanpa Google Search): Flash (utama) -> cadangan -> Lite (terakhir, paling murah tapi paling lemah membaca angka).
-const ATTEMPTS = [{ model: GEMINI_MODEL }, ...GEMINI_FALLBACK_MODELS.map((model) => ({ model }))];
+const GEM_RE = /^[A-Za-z0-9._:\/-]{2,80}$/;
+const attemptsFor = (primary) => [primary, ...GEMINI_FALLBACK_MODELS.filter((m) => m !== primary)].map((model) => ({ model }));
 
 const SMC_SYSTEM_ADDENDUM = `
 ATURAN V2 SMC — PRIORITAS SAAT OHLC CLOUD/MT4 TERSEDIA:
@@ -246,7 +247,11 @@ export async function POST(req) {
     const fixedPair = pairChoice === 'AUTO' ? null : PAIRS[pairChoice];
     const strict = body.strict !== false; // Validator Zona & Konflik Order (Pengaturan), default ON
     const zones = body.zoneStyle === 'three' ? 3 : 2; // Gaya Zona: 2 zona (lama) atau 3 zona (Scalp/Intraday/Swing)
-    const wantTwoStage = body.mode === '2stage';
+    // Pilihan mesin dari Pengaturan: 'gateway' = model gateway menulis analisa (Gemini hanya membaca gambar bila ada).
+    const engineGw = body.engine === 'gateway';
+    const wantTwoStage = body.mode === '2stage' || engineGw;
+    const geminiModel = GEM_RE.test(String(body.geminiModel || '').trim()) ? String(body.geminiModel).trim() : GEMINI_MODEL;
+    const ATTEMPTS = attemptsFor(geminiModel);
     const marketSource = ['cloud', 'mt4', 'auto', 'screenshot'].includes(body.marketSource) ? body.marketSource : 'cloud';
     const gwModel = gwModelOf(body.gwModel);
 
@@ -414,7 +419,7 @@ export async function POST(req) {
           };
           let data = null;
           let exModel = null;
-          for (const m of [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS.slice(0, 1)]) {
+          for (const m of [geminiModel, ...GEMINI_FALLBACK_MODELS.filter((x) => x !== geminiModel).slice(0, 1)]) {
             const left = BUDGET_MS - (Date.now() - t0);
             if (left < 30_000) break;
             try {
@@ -715,7 +720,7 @@ export async function POST(req) {
     } else if (twoNote) {
       notices.push(`⚠️ ${twoNote}`);
     }
-    if (!two && used.model !== GEMINI_MODEL) {
+    if (!two && used.model !== geminiModel) {
       notices.push(`ℹ️ Kuota model utama habis, dijalankan otomatis dengan \`${used.model}\`.`);
     }
     if (fundamental.offline) {
@@ -736,7 +741,7 @@ export async function POST(req) {
     }
     if (fixes.length) notices.push(`🚫 Masih ada ${fixes.length} kesalahan arah setelah validasi — jangan pasang order yang ditandai 🚫.`);
     guard.notes.forEach((n) => notices.push(n));
-    const degraded = (mt4PriceDeltaPct != null && mt4PriceDeltaPct > 0.3) || (!two && used?.model && used.model !== GEMINI_MODEL);
+    const degraded = (mt4PriceDeltaPct != null && mt4PriceDeltaPct > 0.3) || (!two && used?.model && used.model !== geminiModel);
     if (degraded && /Keyakinan\s*:?\s*\**\s*Tinggi/i.test(markdown)) {
       markdown = markdown.replace(/(Keyakinan\s*:?\s*\**\s*)Tinggi/i, '$1Sedang');
       notices.push('🎚 Keyakinan diturunkan ke Sedang (screenshot basi atau model cadangan).');

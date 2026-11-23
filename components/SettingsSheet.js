@@ -5,7 +5,7 @@ import { THEMES } from '@/lib/themes';
 import { NAV_MODES } from '@/lib/sections';
 
 // Panel Pengaturan: bottom-sheet di HP, dialog di tablet/desktop. Berisi Tema & API Key.
-export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, onTestGateway, onLoadModels, marketSource = 'cloud', onMarketSource, zoneStyle = 'two', onZoneStyle }) {
+export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, engine = 'gemini', onEngine, geminiModel = '', onGeminiModel, onTestGateway, onLoadModels, marketSource = 'cloud', onMarketSource, zoneStyle = 'two', onZoneStyle }) {
   const [showKey, setShowKey] = useState(false);
   const panelRef = useRef(null);
 
@@ -93,6 +93,38 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
         </section>
 
         <section className="mb-5">
+          <h3 className="field-label">Model AI</h3>
+          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Mesin AI">
+            {[
+              { k: 'gemini', t: 'Gemini', d: 'Model Gemini (bisa baca gambar).' },
+              { k: 'gateway', t: 'Model saya (gateway)', d: 'Model gateway menulis analisa & chat. Bila ada screenshot, Gemini hanya membaca gambar dulu.' },
+            ].map((m) => {
+              const on = engine === m.k;
+              return (
+                <button key={m.k} type="button" role="radio" aria-checked={on} onClick={() => onEngine?.(m.k)}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition ${on ? 'border-gold bg-gold/10 ring-1 ring-gold/50' : 'border-line bg-panel2 hover:border-gold/40'}`}>
+                  <span className="block text-sm font-semibold">{m.t}</span>
+                  <span className="mt-0.5 block text-[11px] leading-snug text-muted">{m.d}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-2">
+            <label className="field-label" htmlFor="gemmodel">Model Gemini (kosong = default)</label>
+            <input id="gemmodel" value={geminiModel} placeholder="gemini-flash-latest" onChange={(e) => onGeminiModel?.(e.target.value.trim())}
+              autoCapitalize="off" autoCorrect="off" spellCheck={false} className="w-full rounded-xl border border-line bg-panel2 px-3 py-2 text-sm" />
+          </div>
+          <div className="mt-2">
+            <label className="field-label" htmlFor="gwmodel">Model gateway (nama bebas)</label>
+            <input id="gwmodel" value={gwModel} onChange={(e) => onGwModel(e.target.value.trim())}
+              autoCapitalize="off" autoCorrect="off" spellCheck={false} className="w-full rounded-xl border border-line bg-panel2 px-3 py-2 text-sm" />
+            <GatewayTest onTest={onTestGateway} />
+            <ModelPicker onLoad={onLoadModels} current={gwModel} onPick={onGwModel} />
+          </div>
+          <p className="mt-2 text-[10px] leading-snug text-muted">Berlaku untuk analisis dan chat. Pembacaan cepat pair/harga dari gambar tetap memakai Gemini Flash-Lite. Model gateway tidak bisa melihat gambar, jadi tanpa screenshot ia bekerja murni dari OHLC MT4. Jika model gagal, analisis menampilkan error (gateway) atau pindah ke model Gemini cadangan.</p>
+        </section>
+
+        <section className="mb-5">
           <h3 className="field-label">Mode Analisis</h3>
           <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Mode analisis">
             {[
@@ -115,23 +147,6 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
               );
             })}
           </div>
-          {mode === '2stage' ? (
-            <div className="mt-2">
-              <label className="field-label" htmlFor="gwmodel">Model tahap 2 (gateway)</label>
-              <input
-                id="gwmodel"
-                value={gwModel}
-                onChange={(e) => onGwModel(e.target.value.trim())}
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-                className="w-full rounded-xl border border-line bg-panel2 px-3 py-2 text-sm"
-              />
-              <GatewayTest onTest={onTestGateway} />
-              <ModelPicker onLoad={onLoadModels} current={gwModel} onPick={onGwModel} />
-              <p className="mt-1 text-[11px] leading-snug text-muted">Bila tahap 1/2 gagal, otomatis kembali ke Gemini langsung. Lebih lambat (2 panggilan).</p>
-            </div>
-          ) : null}
         </section>
 
         <section className="mb-5">

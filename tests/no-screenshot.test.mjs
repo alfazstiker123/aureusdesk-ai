@@ -27,3 +27,12 @@ test('route: tanpa gambar hanya lolos untuk mt4 + pair tetap', () => {
   assert.match(src, /marketSource === 'mt4' && !!fixedPair/);
   assert.match(src, /noShot && !\(marketInitial\.snapshots\?\.length\)/);
 });
+
+test('pemilihan model: engine gateway & model Gemini dibaca server', () => {
+  const src = fs.readFileSync(new URL('../app/api/analyze/route.js', import.meta.url), 'utf8');
+  assert.match(src, /engineGw = body\.engine === 'gateway'/);
+  assert.match(src, /wantTwoStage = body\.mode === '2stage' \|\| engineGw/);
+  assert.match(src, /attemptsFor\(geminiModel\)/);
+  const chat = fs.readFileSync(new URL('../app/api/chat/route.js', import.meta.url), 'utf8');
+  assert.match(chat, /body\.engine === 'gateway'/);
+});

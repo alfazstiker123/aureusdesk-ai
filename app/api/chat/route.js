@@ -54,6 +54,20 @@ export async function POST(req) {
 
   const apiKey = (req.headers.get('x-gemini-key') || '').trim() || process.env.GEMINI_API_KEY;
   let lastErr = '';
+  const gwFirst = body.engine === 'gateway' && gwConfigured();
+  let gwTried = false;
+  const tryGateway = async () => {
+    gwTried = true;
+    const hist = msgs.slice(0, -1).map((m) => ({ role: m.role, content: m.content }));
+    return gatewayChat({ model: gwModelOf(body.gwModel), system, user: msgs[msgs.length - 1].content, history: hist, maxTokens: 1200, timeoutMs: 20000, temperature: 0.4 });
+  };
+  if (gwFirst) {
+    const g = await tryGateway();
+    if (g.ok) return NextResponse.json({ reply: g.text, model: g.model || gwModelOf(body.gwModel) });
+    lastErr = `gateway: ${g.error}`;
+  }
+  const userGem = /^[A-Za-z0-9._:\/-]{2,80}$/.test(String(body.geminiModel || '').trim()) ? String(body.geminiModel).trim() : null;
+  const chatModels = userGem ? [userGem, ...CHAT_MODELS.filter((m) => m !== userGem)] : CHAT_MODELS;
 
   if (apiKey) {
     const payload = {
@@ -61,7 +75,7 @@ export async function POST(req) {
       contents: msgs.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
       generationConfig: { temperature: 0.4, maxOutputTokens: 1200 },
     };
-    for (const model of CHAT_MODELS) {
+    for (const model of chatModels) {
       try {
         const r = await fetch(`${BASE}/${model}:generateContent`, {
           method: 'POST',
@@ -88,7 +102,7 @@ export async function POST(req) {
   }
 
   // Cadangan: gateway OpenAI-compatible bila sudah dikonfigurasi di env
-  if (gwConfigured()) {
+  if (gwConfigured() && !gwTried) {
     const hist = msgs.slice(0, -1).map((m) => ({ role: m.role, content: m.content }));
     const g = await gatewayChat({
       model: gwModelOf(body.gwModel),

@@ -39,6 +39,8 @@ const LS = {
   strict: 'aureus_strict',
   mode: 'aureus_mode',
   gwModel: 'aureus_gwmodel',
+  engine: 'aureus_engine',
+  geminiModel: 'aureus_geminimodel',
   marketSource: 'aureus_market_source',
   zoneStyle: 'aureus_zone_style',
 };
@@ -117,6 +119,8 @@ export default function Home() {
   const [strict, setStrict] = useState(true);
   const [mode, setMode] = useState('single');
   const [gwModel, setGwModel] = useState('kimi-k2.7-code-highspeed');
+  const [engine, setEngine] = useState('gemini'); // 'gemini' | 'gateway'
+  const [geminiModel, setGeminiModel] = useState('');
   const [marketSource, setMarketSource] = useState('cloud');
   const [zoneStyle, setZoneStyle] = useState('two');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -185,6 +189,9 @@ export default function Home() {
       if (ms && ['cloud', 'mt4', 'auto', 'screenshot'].includes(ms)) setMarketSource(ms);
       const gm = localStorage.getItem(LS.gwModel);
       if (gm && /^[A-Za-z0-9._:\/-]{2,80}$/.test(gm)) setGwModel(gm);
+      if (localStorage.getItem(LS.engine) === 'gateway') setEngine('gateway');
+      const gem = localStorage.getItem(LS.geminiModel);
+      if (gem && /^[A-Za-z0-9._:\/-]{2,80}$/.test(gem)) setGeminiModel(gem);
       const cf = localStorage.getItem(LS.copyFmt);
       if (cf && COPY_FORMATS.some((f) => f.key === cf)) setCopyFmt(cf);
     } catch {}
@@ -508,7 +515,7 @@ export default function Home() {
           'Content-Type': 'application/json',
           ...(apiKey.trim() ? { 'x-gemini-key': apiKey.trim() } : {}),
         },
-        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict, mode, gwModel, marketSource, zoneStyle }),
+        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict, mode, gwModel, engine, geminiModel, marketSource, zoneStyle }),
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || 'Gagal menganalisa.');
@@ -1007,6 +1014,16 @@ export default function Home() {
           setMode(v);
           persist(LS.mode, v === '2stage' ? '2stage' : '');
         }}
+        engine={engine}
+        onEngine={(v) => {
+          setEngine(v);
+          persist(LS.engine, v === 'gateway' ? 'gateway' : '');
+        }}
+        geminiModel={geminiModel}
+        onGeminiModel={(v) => {
+          setGeminiModel(v);
+          persist(LS.geminiModel, v);
+        }}
         gwModel={gwModel}
         onGwModel={(v) => {
           setGwModel(v);
@@ -1065,6 +1082,8 @@ export default function Home() {
         balance={balance}
         risk={risk}
         gwModel={gwModel}
+        engine={engine}
+        geminiModel={geminiModel}
         open={chatOpen}
         onToggle={() => setChatOpen((o) => !o)}
       />
