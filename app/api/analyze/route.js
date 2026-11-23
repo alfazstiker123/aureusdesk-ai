@@ -259,8 +259,10 @@ export async function POST(req) {
       );
     }
 
-    if (!Array.isArray(images) || images.length === 0) {
-      return NextResponse.json({ error: 'Upload minimal 1 screenshot chart.' }, { status: 400 });
+    // Tanpa screenshot hanya untuk Sumber Data = MT4 EA dengan pair tetap (bukan AUTO) dan bukan mode 2-tahap.
+    const noShot = Array.isArray(images) && images.length === 0 && marketSource === 'mt4' && !!fixedPair && !wantTwoStage;
+    if (!Array.isArray(images) || (images.length === 0 && !noShot)) {
+      return NextResponse.json({ error: 'Upload minimal 1 screenshot chart. (Tanpa screenshot hanya untuk Sumber Data MT4 EA + pair dipilih manual, bukan AUTO/2-tahap.)' }, { status: 400 });
     }
     if (images.length > MAX_IMAGES) {
       return NextResponse.json({ error: `Maksimal ${MAX_IMAGES} gambar per analisa.` }, { status: 400 });
@@ -330,6 +332,12 @@ export async function POST(req) {
     chartPrice = sane(chartPrice, resolvedPair);
     const marketInitial = resolvedPair ? await loadMarketContext(resolvedPair.id, marketSource, zones, { brokerPrice: chartPrice }) : { text: '', snapshots: [], smc: null, source: 'NONE' };
     let mt4ContextUsed = marketInitial;
+    if (noShot && !(marketInitial.snapshots?.length)) {
+      return NextResponse.json({
+        error: `DATA TIDAK CUKUP: tanpa screenshot butuh OHLC MT4 yang segar (maks 20 menit). Pastikan EA AureusDesk Bridge menyala di MT4 Headway.${marketInitial.error ? ' Detail: ' + marketInitial.error : ''}`,
+        code: 'INSUFFICIENT_DATA',
+      }, { status: 422 });
+    }
     const weekendMap = weekendMappingBlock(resolvedPair || fixedPair);
     const parts = [{ text: buildUserPrompt({ balance, risk, session, labels, pair: resolvedPair || fixedPair, fundamental: fundamental.text, strict }) +
       weekendMap + (marketInitial.text ? `\n\n${marketInitial.text}` : '') }];

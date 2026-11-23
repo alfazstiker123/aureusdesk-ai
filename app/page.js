@@ -461,8 +461,9 @@ export default function Home() {
   // ---- generate
   async function handleGenerate() {
     setError('');
-    if (!images.length) {
-      setError('Upload minimal 1 screenshot chart terlebih dahulu.');
+    const noShotOk = marketSource === 'mt4' && pair !== 'AUTO' && mode !== '2stage';
+    if (!images.length && !noShotOk) {
+      setError('Upload minimal 1 screenshot chart. Tanpa screenshot hanya bisa bila Sumber Data = MT4 EA, pair dipilih manual (bukan AUTO), dan mode bukan 2-tahap.');
       return;
     }
     if (!(Number(balance) > 0)) {
@@ -484,7 +485,7 @@ export default function Home() {
       const compressed = [];
       const thumbs = [];
       // Anggaran adaptif: sedikit gambar -> lebih tajam; banyak gambar -> dikecilkan agar muat
-      const perImgBytes = Math.min(1_300_000, Math.floor((MAX_PAYLOAD * 0.75 * 0.97) / ordered.length));
+      const perImgBytes = Math.min(1_300_000, Math.floor((MAX_PAYLOAD * 0.75 * 0.97) / Math.max(1, ordered.length)));
       const maxWidth = ordered.length <= 3 ? 1920 : ordered.length <= 6 ? 1600 : 1280;
       for (const img of ordered) {
         const c = await compressImage(img.file, { maxWidth, maxBytes: perImgBytes });
