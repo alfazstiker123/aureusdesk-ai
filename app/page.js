@@ -1040,7 +1040,7 @@ export default function Home() {
         }}
         onTestGateway={async () => {
           try {
-            const r = await apiFetch(`/api/health?gateway=1&model=${encodeURIComponent(gwModel)}`);
+            const r = await apiFetch(`/api/health?gateway=1&probe=1&model=${encodeURIComponent(gwModel)}`);
             const j = await r.json().catch(() => ({}));
             return typeof j.gateway === 'string' ? j.gateway : j.gateway ? `OK (${j.gateway.ms} ms): ${j.gateway.sample}` : r.status === 401 ? 'PIN salah/belum diisi' : `Tidak ada hasil (HTTP ${r.status})`;
           } catch (e) {

@@ -47,6 +47,21 @@ export async function GET(req) {
       out.gatewayModels = await gatewayModels();
     } else if (!gwConfigured()) {
       out.gateway = 'ERROR: env OPENAI_COMPAT_BASE_URL / OPENAI_COMPAT_API_KEY belum diisi';
+    } else if (searchParams.get('probe') === '1') {
+      // Diagnosa: apakah gateway memotong prompt panjang atau mengabaikan role system?
+      const model = gwModelOf(searchParams.get('model'));
+      const filler = 'Harga XAUUSD bergerak naik turun di sekitar zona. ';
+      const mk = (n) => `KODE_AWAL=ALFA-731. ${filler.repeat(Math.ceil(n / filler.length)).slice(0, n)} KODE_AKHIR=OMEGA-482. Tulis kedua kode di atas saja, tanpa kata lain.`;
+      const sizes = [1000, 4000, 12000, 30000];
+      const runs = await Promise.all([
+        ...sizes.map((n) => gatewayChat({ model, user: mk(n), maxTokens: 60, timeoutMs: 20000, temperature: 0 })),
+        gatewayChat({ model, system: 'Jawab HANYA dengan kata: SYSTEM-OK', user: 'Halo', maxTokens: 20, timeoutMs: 20000, temperature: 0 }),
+      ]);
+      const line = (label, g, want) => `${label}: ${g.ok ? (want(g.text) ? 'LOLOS' : 'GAGAL') + ` (prompt_tokens=${g.usage?.prompt ?? '?'}, balas "${g.text.replace(/\s+/g, ' ').slice(0, 50)}")` : 'ERROR ' + g.error}`;
+      out.gateway = [
+        ...sizes.map((n, i) => line(`${n} char`, runs[i], (t) => /ALFA-731/.test(t) && /OMEGA-482/.test(t))),
+        line('role system', runs[sizes.length], (t) => /SYSTEM-OK/.test(t)),
+      ].join(' | ');
     } else {
       const g = await gatewayChat({ model: gwModelOf(searchParams.get('model')), user: 'Balas satu kata: OK', maxTokens: 20, timeoutMs: 25000 });
       out.gateway = g.ok ? { status: 'OK', model: gwModelOf(searchParams.get('model')), ms: g.ms, sample: g.text.slice(0, 80) } : `ERROR${g.status ? ' ' + g.status : ''}: ${g.error} (${g.ms}ms)`;

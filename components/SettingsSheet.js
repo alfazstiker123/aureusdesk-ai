@@ -272,7 +272,7 @@ function GatewayTest({ onTest }) {
         }}
         className="rounded-lg border border-line bg-panel2 px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
       >
-        {busy ? 'Menguji…' : 'Uji Gateway'}
+        {busy ? 'Menguji (±20 dtk)…' : 'Uji Gateway + Batas Prompt'}
       </button>
       {res ? <p className="mt-1 break-words text-[11px] text-muted">{res}</p> : null}
     </div>
