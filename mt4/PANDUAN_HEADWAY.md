@@ -22,5 +22,5 @@ EA hanya MENGIRIM OHLC candle tertutup. Tidak ada OrderSend/OrderClose/OrderModi
 4. Uji gagal: matikan internet 10 menit -> di chart muncul "DATA TIDAK CUKUP"; di app, status per TF "DATA TIDAK CUKUP" dan keputusan INSUFFICIENT_DATA.
 
 ## D. Pesan error
-- HTTP 401: BridgeSecret salah. err 4060: URL belum di Allow WebRequest. "PRICE MISMATCH": bid beda >3% dari close (cek simbol). "DATA TIDAK CUKUP ... UTC": offset waktu salah, atur ManualUtcOffsetHours dan AutoUtcOffset=false.
+- HTTP 401: BridgeSecret salah. err 4060: URL belum di Allow WebRequest. "PRICE MISMATCH": bid beda jauh dari close melebihi toleransi adaptif ATR/spread (maks 3%; cek simbol). "DATA TIDAK CUKUP ... UTC": offset waktu salah, atur ManualUtcOffsetHours dan AutoUtcOffset=false.
 - Akhir pekan: data Jumat tetap diterima saat pasar tutup.
