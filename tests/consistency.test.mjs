@@ -233,18 +233,24 @@ test('insertDecision: sebelum Ringkasan Cepat, tidak dobel saat dipanggil ulang'
 // ---- Audit lanjutan: 4 celah ----
 import { insufficientDecision, dataGap } from '../lib/decision.js';
 
-test('Dasar: tanpa fallback ke zona lebar; W1/MN hanya konteks bias', () => {
+test('Dasar: tanpa fallback ke zona lebar; W1/MN hanya konteks bias (audit 2: tidak meloloskan entry)', () => {
   const md = `| Zona & Strategi | Zona Entry | Stop Loss (SL) | TP1 | TP2 | Syarat Konfirmasi |
 |---|---|---|---|---|---|
 | BUY Zona 2 - Intraday (FVG M15) | 3577.48 - 3583.86 | 3574.28 | 3600.00 | 3612.00 | Engulfing · Dasar: MN FVG |
 `;
-  const onlyWide = [{ timeframe: 'MN', status: 'OK', zones: [{ type: 'BULLISH', low: 3472.72, high: 3600.96, source: 'FVG' }] }];
-  const r = enforceSmcZones(md, { analyses: onlyWide, atrH1: 21.34, price: 3620.99, priceRe: /\d{3,5}(?:\.\d+)?/ });
+  const pr = { atrH1: 21.34, price: 3620.99, priceRe: /\d{3,5}(?:\.\d+)?/ };
+  // zona HTF non-W1/MN yang terlalu lebar: entry tetap valid, tapi "Dasar" tidak memakainya sebagai konfluensi presisi
+  const wideH4 = [{ timeframe: 'H4', status: 'OK', zones: [{ type: 'BULLISH', low: 3472.72, high: 3600.96, source: 'FVG' }] }];
+  const r = enforceSmcZones(md, { analyses: wideH4, ...pr });
   assert.match(r.markdown, /Dasar: tidak ada bukti konfluensi presisi/);
-  assert.doesNotMatch(r.markdown, /MN FVG/);
-  // MN sempit pun tidak jadi bukti entry
-  const narrowMn = [{ timeframe: 'MN', status: 'OK', zones: [{ type: 'BULLISH', low: 3577, high: 3590, source: 'FVG' }] }];
-  assert.match(enforceSmcZones(md, { analyses: narrowMn, atrH1: 21.34, price: 3620.99, priceRe: /\d{3,5}(?:\.\d+)?/ }).markdown, /tidak ada bukti konfluensi presisi/);
+  assert.doesNotMatch(r.markdown, /H4 FVG/);
+  // MN/W1 (lebar maupun sempit) tidak meloloskan entry: order dibatalkan
+  for (const tf of ['MN', 'W1']) for (const [lo, hi] of [[3472.72, 3600.96], [3577, 3590]]) {
+    const an = [{ timeframe: tf, status: 'OK', zones: [{ type: 'BULLISH', low: lo, high: hi, source: 'FVG' }] }];
+    const out = enforceSmcZones(md, { analyses: an, ...pr }).markdown;
+    assert.match(out, /Tidak ada level valid \(tunggu\)/);
+    assert.doesNotMatch(out, /MN FVG|W1 FVG/);
+  }
 });
 
 test('Level Kunci: angka yang tidak cocok level mesin ditandai tidak terverifikasi', () => {

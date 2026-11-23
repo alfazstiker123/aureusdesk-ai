@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { GEMINI_MODEL, GEMINI_FALLBACK_MODELS, buildSystemInstruction, buildUserPrompt, extractBias, zoneStyleAddendum } from '@/lib/prompt';
+import { GEMINI_MODEL, GEMINI_FALLBACK_MODELS, buildSystemInstruction, buildUserPrompt, extractBias, zoneStyleAddendum, OHLC_ONLY_SYSTEM } from '@/lib/prompt';
 import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice, resolvePair, parseATR, zoneRange, zoneRange3, rangeText } from '@/lib/pairs';
 import { gatewayChat, gwConfigured, gwModelOf, looksLikeAnalysis } from '@/lib/gateway';
 import { EXTRACT_SYSTEM, EXTRACT_SCHEMA, normalizeExtract, buildCandidates, formatDataBlock, STAGE2_ADDENDUM } from '@/lib/extract';
@@ -64,7 +64,7 @@ async function loadMt4Context(pairId, zones = 2) {
     const feed = feedPriceInfo(snapshots);
     const zcd = zoneCandidateData(smc, profile, feed.price || quotePrice, zones);
     const zc = zcd.text;
-    return { text: marketContext(snapshots) + report + feed.line + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, zoneRes: zcd.res, feedPrice: feed.price, snapshots, smc, source: 'MT4_EA', warnings: [] };
+    return { text: marketContext(snapshots) + report + feed.line + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, zoneRes: zcd.res, feedPrice: feed.price, quote: feed.quote, snapshots, smc, source: 'MT4_EA', warnings: [] };
   } catch (e) {
     return { text: `DATA OHLC MT4 tidak dapat diverifikasi (${e.message}).`, snapshots: [], smc: null, source: 'NONE', error: e.message };
   }
@@ -140,10 +140,19 @@ function candlePack(ctx) {
 function feedPriceInfo(snapshots) {
   const q = snapshots?.find((x) => x.timeframe === 'M5') || snapshots?.find((x) => x.timeframe === 'M15');
   const bar = q?.bars?.at(-1);
-  const price = Number(bar?.close || 0);
-  if (!(price > 0)) return { price: 0, line: '' };
+  const close = Number(bar?.close || 0);
+  if (!(close > 0)) return { price: 0, line: '', quote: null };
   const wib = bar.time ? new Date((Number(bar.time) + 300) * 1000 + 7 * 3600 * 1000).toISOString().slice(11, 16) : '';
-  return { price, line: `\n\nHARGA FEED TERKINI (close candle ${q.timeframe} tertutup terakhir${wib ? `, ±${wib} WIB` : ''}): ${price}. Jika harga di screenshot berbeda >0.15% dari angka ini, screenshot basi: tulis "Harga Terakhir" = harga feed ini dan sebut singkat bahwa screenshot lebih lama.` };
+  // Harga acuan jarak zona = BID terbaru dari EA (bukan close candle tertutup). Struktur SMC tetap dari candle tertutup.
+  const bid = Number(q?.bid || 0), ask = Number(q?.ask || 0);
+  if (bid > 0 && !(ask > 0 && ask < bid)) {
+    const spread = ask > 0 ? ask - bid : null;
+    const at = q.received_at ? new Date(q.received_at) : null;
+    const atWib = at && !Number.isNaN(at.getTime()) ? new Date(at.getTime() + 7 * 3600 * 1000).toISOString().slice(11, 19) : '';
+    const quote = { price: bid, bid, ask: ask > 0 ? ask : null, spread, receivedAt: q.received_at || null, atWib, closeRef: close, closeTf: q.timeframe };
+    return { price: bid, quote, line: `\n\nHARGA FEED TERKINI (Bid MT4${atWib ? `, kuotasi ${atWib} WIB` : ''}): ${bid}${ask > 0 ? ` | Ask ${ask} | spread ${Number(spread.toFixed(5))}` : ''}. Close candle ${q.timeframe} tertutup terakhir${wib ? ` (±${wib} WIB)` : ''} = ${close} (hanya referensi struktur). Jarak zona dihitung dari Bid; order BUY terisi di Ask (Bid + spread), order SELL di Bid. Jika harga di screenshot berbeda >0.15% dari Bid ini, screenshot basi: tulis "Harga Terakhir" = Bid ini dan sebut singkat bahwa screenshot lebih lama.` };
+  }
+  return { price: close, quote: null, line: `\n\nHARGA FEED TERKINI (close candle ${q.timeframe} tertutup terakhir${wib ? `, ±${wib} WIB` : ''}): ${close}. Jika harga di screenshot berbeda >0.15% dari angka ini, screenshot basi: tulis "Harga Terakhir" = harga feed ini dan sebut singkat bahwa screenshot lebih lama.` };
 }
 
 function zoneCandidateData(smc, profile, price, zones = 2) {
@@ -356,7 +365,7 @@ export async function POST(req) {
     });
 
     const basePayload = {
-      systemInstruction: { parts: [{ text: buildSystemInstruction(resolvedPair || fixedPair, strict) + (zones === 3 ? zoneStyleAddendum(resolvedPair || fixedPair) : '') + (marketInitial.snapshots?.length ? SMC_SYSTEM_ADDENDUM : '') }] },
+      systemInstruction: { parts: [{ text: buildSystemInstruction(resolvedPair || fixedPair, strict) + (zones === 3 ? zoneStyleAddendum(resolvedPair || fixedPair) : '') + (marketInitial.snapshots?.length ? SMC_SYSTEM_ADDENDUM : '') + (noShot ? OHLC_ONLY_SYSTEM : '') }] },
       contents: [{ role: 'user', parts }],
       generationConfig: withThinking({
         temperature: 0.2,
@@ -398,7 +407,7 @@ export async function POST(req) {
         return NextResponse.json({ error: 'Model gateway belum dikonfigurasi di server (OPENAI_COMPAT_*). Matikan mode 2 tahap untuk memakai Gemini.' }, { status: 400 });
       }
       const pNo = fixedPair;
-      twoSystem = buildSystemInstruction(pNo, strict) + (zones === 3 ? zoneStyleAddendum(pNo) : '') + SMC_SYSTEM_ADDENDUM;
+      twoSystem = buildSystemInstruction(pNo, strict) + (zones === 3 ? zoneStyleAddendum(pNo) : '') + SMC_SYSTEM_ADDENDUM + OHLC_ONLY_SYSTEM;
       twoUser = buildUserPrompt({ balance, risk, session, labels, pair: pNo, fundamental: fundamental.text, strict }) +
         weekendMappingBlock(pNo) + `\n\n${marketInitial.text}`;
       const g = await gatewayChat({ model: gwModel, system: twoSystem, user: twoUser, timeoutMs: BUDGET_MS - (Date.now() - t0) - 2_000 });
@@ -692,7 +701,7 @@ export async function POST(req) {
       }
     }
 
-    let mt4Status = mt4ContextUsed?.snapshots?.length ? 'OHLC_HYBRID' : 'SCREENSHOT_ONLY';
+    let mt4Status = mt4ContextUsed?.snapshots?.length ? (noShot ? 'OHLC_ONLY' : 'OHLC_HYBRID') : 'SCREENSHOT_ONLY';
     const mt4Report = mt4ContextUsed?.smc || null;
     let mt4PriceDeltaPct = null;
     if (mt4Status === 'OHLC_HYBRID' && pairCfg && lastPx) {
@@ -732,8 +741,9 @@ export async function POST(req) {
 
     const notices = [];
     if (htfNote) notices.push(htfNote);
-    if (mt4Status === 'OHLC_HYBRID' && mt4Report?.analyses?.length) {
-      notices.push(`📡 Data Hybrid aktif: OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'Cloud' : 'MT4 EA'} diterima dan lolos pemeriksaan. SMC dihitung deterministik dari candle tertutup; bukan probabilitas profit.`);
+    { const qt = mt4ContextUsed?.quote; if (qt) notices.push(`💱 Harga acuan zona: Bid ${qt.bid}${qt.ask ? ` / Ask ${qt.ask} (spread ${Number(qt.spread.toFixed(5))})` : ''}${qt.atWib ? `, kuotasi EA ${qt.atWib} WIB` : ''}. Struktur SMC dari candle tertutup (close ${qt.closeTf} ${qt.closeRef}).`); }
+    if ((mt4Status === 'OHLC_HYBRID' || mt4Status === 'OHLC_ONLY') && mt4Report?.analyses?.length) {
+      notices.push(`${mt4Status === 'OHLC_ONLY' ? '📡 OHLC ONLY (tanpa screenshot) aktif' : '📡 Data Hybrid aktif'}: OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'Cloud' : 'MT4 EA'} diterima dan lolos pemeriksaan. SMC dihitung deterministik dari candle tertutup; bukan probabilitas profit.`);
       markdown = `> 📡 **V2 — OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'CLOUD' : 'MT4'} + SMC**\n> Sumber: ${mt4ContextUsed.source === 'CLOUD' ? `${mt4ContextUsed.provider || 'Cloud'} (feed exchange publik, bukan broker Anda)` : 'MT4 EA'}. Cocokkan harga dengan chart broker sebelum menggunakan level.\n\n${mt4Report.compactBlock}\n\n---\n\n${markdown}\n\n---\n\n### Lampiran: Detail SMC dari candle (referensi)\n\n\`\`\`text\n${mt4ContextUsed.zoneCandidates ? mt4ContextUsed.zoneCandidates + '\n\n' : ''}${mt4Report.promptBlock}\n\`\`\``;
     } else if (mt4Status === 'PRICE_MISMATCH') {
       notices.push(`🚫 PRICE MISMATCH: harga screenshot dan feed pasar berbeda ${mt4PriceDeltaPct?.toFixed(2)}%. Jangan gunakan level entry dari analisa ini sebelum simbol/instrumen, waktu screenshot, dan chart diperiksa ulang.`);

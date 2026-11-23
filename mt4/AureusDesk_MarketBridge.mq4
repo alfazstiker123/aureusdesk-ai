@@ -1,10 +1,10 @@
 //+------------------------------------------------------------------+
-//| AureusDesk_MarketBridge.mq4  v3.0 (Headway / XAUUSD production)   |
+//| AureusDesk_MarketBridge.mq4  v3.1 (Headway / XAUUSD production)   |
 //| Mengirim OHLC candle TERTUTUP dari server broker ke AureusDesk AI.|
 //| TIDAK ADA fungsi trading: tanpa OrderSend/OrderClose/OrderModify. |
 //+------------------------------------------------------------------+
 #property strict
-#property version     "3.00"
+#property version     "3.10"
 #property description "AureusDesk AI: pengirim OHLC candle tertutup (read-only). Tidak membuka/menutup transaksi."
 
 //--- koneksi
@@ -22,7 +22,7 @@ input bool   SendM5=true, SendM15=true, SendH1=true, SendH4=true, SendD1=true, S
 input bool   AutoUtcOffset       = true;    // hitung selisih TimeCurrent()-TimeGMT() saat pasar buka
 input int    ManualUtcOffsetHours = 2;      // cadangan saat pasar tutup / auto tidak valid (cek di status AureusDesk)
 //--- pengaman harga
-input double MaxBidCloseDiffPct  = 3.0;     // bid vs close candle tertutup (M5/M15/H1); lebih besar = PRICE MISMATCH, tidak dikirim
+input double MaxBidCloseDiffPct  = 3.0;     // BATAS KERAS bid vs close (anti salah simbol). Toleransi sebenarnya adaptif: max(4xATR14, 10xspread, 0.05%)
 input bool   ShowStatusOnChart   = true;
 
 #define TF_COUNT 6
@@ -93,7 +93,7 @@ void SetStatus(int i, string s)
 void ShowStatus()
 {
    if(!ShowStatusOnChart) return;
-   string t = "AureusDesk Bridge v3.0 | " + g_sym + " | UTC offset server " + IntegerToString(g_offsetUsed / 3600) + "j (" + g_offsetMode + ")\n";
+   string t = "AureusDesk Bridge v3.1 | " + g_sym + " | UTC offset server " + IntegerToString(g_offsetUsed / 3600) + "j (" + g_offsetMode + ")\n";
    bool anyOk = false, anyEnabled = false;
    for(int i = 0; i < TF_COUNT; i++)
    {
@@ -104,6 +104,30 @@ void ShowStatus()
    }
    if(anyEnabled && !anyOk) t += ">>> DATA TIDAK CUKUP: tidak ada kiriman sukses baru (cek koneksi / Allow WebRequest / secret).\n";
    Comment(t);
+}
+
+
+//--- ATR(14) dari candle tertutup yang sudah disalin (urutan lama -> baru)
+double Atr14(MqlRates &r[], int n)
+{
+   if(n < 15) return 0;
+   double sum = 0;
+   for(int k = n - 14; k < n; k++)
+      sum += MathMax(r[k].high - r[k].low, MathMax(MathAbs(r[k].high - r[k-1].close), MathAbs(r[k].low - r[k-1].close)));
+   return sum / 14.0;
+}
+
+//--- toleransi |bid - close tertutup| (satuan harga): adaptif ATR + spread, dibatasi MaxBidCloseDiffPct
+double BidCloseTolerance(MqlRates &r[], int n, double bid, double ask, int tfIdx)
+{
+   double close  = r[n - 1].close;
+   double spread = (ask >= bid && bid > 0) ? ask - bid : 0;
+   double tol    = MathMax(4.0 * Atr14(r, n), MathMax(10.0 * spread, close * 0.05 / 100.0));
+   double tfSec  = PeriodSeconds(g_periods[tfIdx]);
+   double ageSec = (double)(TimeCurrent() - r[n - 1].time);
+   double f      = ageSec / tfSec / 2.0;
+   if(f > 1.0) tol *= MathSqrt(f);
+   return MathMin(tol, close * MaxBidCloseDiffPct / 100.0);
 }
 
 //--- kirim satu timeframe. Mengembalikan true bila sukses.
@@ -132,10 +156,11 @@ bool SendTf(int i)
    double lastClose = rates[copied - 1].close;
 
    // PRICE MISMATCH: harga bid harus dekat dengan close candle tertutup (hanya TF pendek)
-   if(i <= 2 && bid > 0 && lastClose > 0 && MathAbs(bid - lastClose) / lastClose * 100.0 > MaxBidCloseDiffPct)
+   double tolPx = (i <= 2 && bid > 0 && lastClose > 0) ? BidCloseTolerance(rates, copied, bid, ask, i) : 0;
+   if(tolPx > 0 && MathAbs(bid - lastClose) > tolPx)
    {
-      SetStatus(i, "PRICE MISMATCH: bid " + DoubleToString(bid, digits) + " vs close " + DoubleToString(lastClose, digits) + " (tidak dikirim)");
-      Print("AureusDesk PRICE MISMATCH ", g_sym, " ", g_names[i], " bid=", bid, " close=", lastClose);
+      SetStatus(i, "PRICE MISMATCH: bid " + DoubleToString(bid, digits) + " vs close " + DoubleToString(lastClose, digits) + " (selisih > toleransi ATR/spread " + DoubleToString(tolPx, digits) + ", tidak dikirim)");
+      Print("AureusDesk PRICE MISMATCH ", g_sym, " ", g_names[i], " bid=", bid, " close=", lastClose, " tol=", tolPx);
       return false;
    }
 
@@ -225,7 +250,7 @@ int OnInit()
    }
    g_offsetUsed = ServerUtcOffsetSec();
    EventSetTimer(MathMax(10, SendEverySeconds));
-   Print("AureusDesk bridge v3.0 aktif: ", g_sym, ", offset server ", g_offsetUsed / 3600, "j (", g_offsetMode, "), tanpa fungsi trading.");
+   Print("AureusDesk bridge v3.1 aktif: ", g_sym, ", offset server ", g_offsetUsed / 3600, "j (", g_offsetMode, "), tanpa fungsi trading.");
    ShowStatus();
    return INIT_SUCCEEDED;
 }
