@@ -170,3 +170,62 @@ test('guard: "Dasar" yang ditulis model diganti bukti mesin (tanpa MN FVG lebar)
   assert.doesNotMatch(r.markdown, /MN FVG/);
   assert.ok(r.notes.some((n) => /"Dasar" disamakan/.test(n)));
 });
+
+// ---- Fase 3: keputusan server ----
+import { buildDecision, insertDecision } from '../lib/decision.js';
+
+const D3 = `| Zona & Strategi | Zona Entry | Stop Loss (SL) | Take Profit 1 (TP1) | Take Profit 2 (TP2) | Syarat Konfirmasi Candlestick |
+|---|---|---|---|---|---|
+| BUY Zona 1 - Scalping (Demand M5) (Counter-Trend - Wajib Konfirmasi Ekstra) | 3603.11 - 3606.59 | 3599.50 | 3615.00 | 3620.00 | x |
+| SELL Zona 2 - Intraday (FVG H1) (Searah Bias) | 3656.82 - 3661.30 | 3665.00 | 3635.00 | 3620.00 | x |
+| SELL Zona 3 - Swing (FVG H4/OB) (Searah Bias) | 3701.76 - 3715.55 | 3720.00 | 3674.40 | 3650.00 | x |
+
+| Order | Harga Entry | Stop Loss | Take Profit | Jarak SL | Lot Aman | Risiko ($) | R:R | Waktu Berakhir (WIB) |
+|---|---|---|---|---|---|---|---|---|
+| Sell Limit Zona 2 (Intraday) | 3656.82 | 3665.00 | 3635.00 | 8.18 | 0.02 | $16.36 | 1:2.67 | 24 Nov 2026, 02:28 WIB |
+| Sell Limit Zona 3 (Swing) | Sudah Terpasang (Lihat 4A) | - | - | - | - | - | - | - |
+| Buy Limit Zona 1 (Scalping) | 3603.11 | 3599.50 | 3615.00 | 3.61 | 0.01 | $3.61 | 1:3.29 | 23 Nov 2026, 22:28 WIB |
+
+**BIAS UTAMA:** BEARISH - FOKUS SELL
+> **Ringkasan Cepat**
+`;
+const ZR = { SELL: { 2: { score: 5.55 }, 3: { score: 4 } }, BUY: { 1: { score: 1 } } };
+
+test('keputusan: satu setup utama searah bias; countertrend hanya alternatif', () => {
+  const d = buildDecision({ markdown: D3, bias: 'BEARISH', zoneRes: ZR, alignment: true });
+  assert.equal(d.status, 'TRADE');
+  assert.equal(d.primary.side, 'SELL');
+  assert.equal(d.primary.zone, 2);
+  assert.match(d.text, /SETUP UTAMA SELL Zona 2/);
+  assert.match(d.text, /\(countertrend, konfirmasi ekstra\) BUY Zona 1/);
+  assert.match(d.text, /bukan probabilitas profit/);
+  // zona yang sudah terpasang dengan skor tertinggi boleh jadi utama, ditandai jelas
+  const p = buildDecision({ markdown: D3, bias: 'BEARISH', zoneRes: { ...ZR, SELL: { 2: { score: 3 }, 3: { score: 9 } } } });
+  assert.equal(p.primary.zone, 3);
+  assert.match(p.text, /sudah terpasang/);
+  assert.ok(buildDecision({ markdown: D3, bias: 'BEARISH', zoneRes: ZR, alignment: false }).warnings.length === 1);
+});
+
+test('keputusan: hanya countertrend, NO TRADE, dan bias netral', () => {
+  const noSell = D3.replace(/^\| SELL Zona \d.*\n/gm, '').replace(/^\| Sell Limit.*\n/gm, '');
+  const c = buildDecision({ markdown: noSell, bias: 'BEARISH', zoneRes: ZR });
+  assert.equal(c.status, 'COUNTERTREND_ONLY');
+  assert.equal(c.primary, null);
+  assert.match(c.text, /HANYA COUNTERTREND/);
+  const empty = noSell.replace(/^\| BUY Zona.*\n/gm, '| BUY Zona 1 - Scalping | Tidak ada level valid (tunggu) | - | - | - | - |\n').replace(/^\| Buy Limit.*\n/gm, '');
+  const n = buildDecision({ markdown: empty, bias: 'BEARISH', zoneRes: ZR });
+  assert.equal(n.status, 'NO_TRADE');
+  assert.match(n.text, /⛔ \*\*KEPUTUSAN SERVER — NO TRADE/);
+  assert.equal(buildDecision({ markdown: D3, bias: 'NETRAL', zoneRes: ZR }).status, 'NO_TRADE');
+  // zona yang ordernya dibatalkan batas risiko tidak boleh jadi setup
+  const dropped = D3.replace('| Sell Limit Zona 2 (Intraday) | 3656.82 |', '| Sell Limit Zona 2 (Intraday) | Tidak Ada Setup (Batas Risiko: Tidak Dipasang) |');
+  assert.equal(buildDecision({ markdown: dropped, bias: 'BEARISH', zoneRes: ZR }).primary.zone, 3);
+});
+
+test('insertDecision: sebelum Ringkasan Cepat, tidak dobel saat dipanggil ulang', () => {
+  const d = buildDecision({ markdown: D3, bias: 'BEARISH', zoneRes: ZR });
+  const once = insertDecision(D3, d.text);
+  assert.ok(once.indexOf('KEPUTUSAN SERVER') < once.indexOf('Ringkasan Cepat'));
+  const twice = insertDecision(once, d.text);
+  assert.equal((twice.match(/KEPUTUSAN SERVER/g) || []).length, 1);
+});

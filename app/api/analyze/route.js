@@ -8,6 +8,7 @@ import { fixInlineTables } from '@/lib/markdownFix';
 import { buildFundamentalBlock } from '@/lib/calendar';
 import { verifyRiskTables, fixDailyClose } from '@/lib/riskCheck';
 import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
+import { buildDecision, insertDecision } from '@/lib/decision';
 import { resolveBias, syncHeadlineBias, syncBiasLabels, syncTfBias, syncLevelLabels, syncExpiry } from '@/lib/consistency';
 import { getMarketSnapshots, marketContext, mt4SymbolForPair } from '@/lib/mt4Market';
 import { getCloudMarketSnapshots, cloudMarketContext, cloudProxyOf, applyBasis } from '@/lib/cloudMarket';
@@ -631,6 +632,18 @@ export async function POST(req) {
         }
       } catch (e) {
         log.push(`retry-zona: ${e?.name === 'TimeoutError' ? 'timeout' : e?.message}`);
+      }
+    }
+
+    // Keputusan server: satu setup utama searah bias / countertrend saja / NO TRADE (dari tabel final + skor mesin)
+    let decision = null;
+    if (mt4ContextUsed?.snapshots?.length && markdown) {
+      try {
+        const rb = resolveBias(extractBias(markdown), mt4ContextUsed.smc?.higherBias);
+        decision = buildDecision({ markdown, bias: rb.bias, zoneRes: mt4ContextUsed.zoneRes, alignment: mt4ContextUsed.smc?.alignment ?? null });
+        markdown = insertDecision(markdown, decision.text);
+      } catch (e) {
+        console.error('[analyze] decision error:', e);
       }
     }
 

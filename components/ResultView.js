@@ -18,10 +18,12 @@ export default function ResultView({ content, priceDecimals, mode, pairId, onToa
     const segs = segmentSection(md);
     const exec = segs.find((s) => s.type === 'exec')?.rows || [];
     const pend = segs.find((s) => s.type === 'pending')?.rows || [];
-    return { meta, exec, pend };
+    const dm = md.match(/^> (🎯|⛔|⚠️) \*\*KEPUTUSAN SERVER — ([^:*]+):\*\*\s*(.*)$/mu);
+    const decision = dm ? { icon: dm[1], title: dm[2].trim(), text: dm[3].trim() } : null;
+    return { meta, exec, pend, decision };
   }, [content]);
 
-  const { meta, exec, pend } = info;
+  const { meta, exec, pend, decision } = info;
   const pair = meta.pair || pairId || '';
   const dec = resolvePair(pair)?.dec ?? (Number.isFinite(meta.price) && meta.price < 20 ? 5 : 2);
   const tone = biasTone(meta.bias || '');
@@ -57,6 +59,13 @@ export default function ResultView({ content, priceDecimals, mode, pairId, onToa
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {decision && (
+        <div className={`rounded-2xl border p-3.5 text-xs leading-relaxed sm:text-sm print:hidden ${decision.icon === '🎯' ? 'border-up/40 bg-up/10 text-strong' : decision.icon === '⛔' ? 'border-down/40 bg-down/10 text-strong' : 'border-amber-400/40 bg-amber-400/10 text-strong'}`}>
+          <div className="mb-1 font-extrabold">{decision.icon} Keputusan server: {decision.title}</div>
+          <p className="text-soft">{decision.text}</p>
         </div>
       )}
 
