@@ -229,3 +229,78 @@ test('insertDecision: sebelum Ringkasan Cepat, tidak dobel saat dipanggil ulang'
   const twice = insertDecision(once, d.text);
   assert.equal((twice.match(/KEPUTUSAN SERVER/g) || []).length, 1);
 });
+
+// ---- Audit lanjutan: 4 celah ----
+import { insufficientDecision, dataGap } from '../lib/decision.js';
+
+test('Dasar: tanpa fallback ke zona lebar; W1/MN hanya konteks bias', () => {
+  const md = `| Zona & Strategi | Zona Entry | Stop Loss (SL) | TP1 | TP2 | Syarat Konfirmasi |
+|---|---|---|---|---|---|
+| BUY Zona 2 - Intraday (FVG M15) | 3577.48 - 3583.86 | 3574.28 | 3600.00 | 3612.00 | Engulfing · Dasar: MN FVG |
+`;
+  const onlyWide = [{ timeframe: 'MN', status: 'OK', zones: [{ type: 'BULLISH', low: 3472.72, high: 3600.96, source: 'FVG' }] }];
+  const r = enforceSmcZones(md, { analyses: onlyWide, atrH1: 21.34, price: 3620.99, priceRe: /\d{3,5}(?:\.\d+)?/ });
+  assert.match(r.markdown, /Dasar: tidak ada bukti konfluensi presisi/);
+  assert.doesNotMatch(r.markdown, /MN FVG/);
+  // MN sempit pun tidak jadi bukti entry
+  const narrowMn = [{ timeframe: 'MN', status: 'OK', zones: [{ type: 'BULLISH', low: 3577, high: 3590, source: 'FVG' }] }];
+  assert.match(enforceSmcZones(md, { analyses: narrowMn, atrH1: 21.34, price: 3620.99, priceRe: /\d{3,5}(?:\.\d+)?/ }).markdown, /tidak ada bukti konfluensi presisi/);
+});
+
+test('Level Kunci: angka yang tidak cocok level mesin ditandai tidak terverifikasi', () => {
+  const an = [
+    { timeframe: 'W1', status: 'OK', bias: 'BEARISH', lastPrice: 3579, structureEvents: [{ type: 'BOS', direction: 'BULLISH', level: 3435.48, time: 1 }], swings: [], zones: [], supports: [], resistances: [] },
+    { timeframe: 'H4', status: 'OK', bias: 'BEARISH', lastPrice: 3612, structureEvents: [], swings: [{ type: 'H', price: 3715.55 }], zones: [], supports: [], resistances: [] },
+  ];
+  const md = `| Timeframe | Struktur/Trend | Level Kunci | Catatan |
+|---|---|---|---|
+| W1 | Bearish | $3500.00 (Low mingguan) | x |
+| H4 | Bearish | $3715.55 (Swing High) | x |
+| D1 | Bearish | $3715.55 (Swing High H4) | x |
+| D1 | Bearish | $3800.00 (Resistance) | x |
+`;
+  const r = syncLevelLabels(md, an, 3620.99);
+  assert.match(r.markdown, /\| W1 \| Bearish \| \$3500\.00 \(Low mingguan\) \(tidak terverifikasi mesin\) \|/);
+  assert.match(r.markdown, /\| H4 \| Bearish \| \$3715\.55 \(Swing High H4\) \|/);
+  assert.match(r.markdown, /\| D1 \| Bearish \| \$3715\.55 \(Swing High H4\) \|/); // D1 cocok level H4 mesin
+  assert.match(r.markdown, /\$3800\.00 \(Resistance\) \(tidak terverifikasi mesin\)/);
+  assert.equal(r.unverified, 2);
+  assert.equal(syncLevelLabels(r.markdown, an, 3620.99).unverified, 0); // idempoten
+});
+
+test('risk cap keras: satu order di atas batas pada lot minimum dibatalkan dan tidak bisa jadi setup utama', () => {
+  const md = `| Zona & Strategi | Zona Entry | Stop Loss (SL) | Take Profit 1 (TP1) | Take Profit 2 (TP2) | Syarat Konfirmasi Candlestick |
+|---|---|---|---|---|---|
+| SELL Zona 2 - Intraday (FVG H1) (Searah Bias) | 3656.82 - 3661.30 | 3685.00 | 3600.00 | 3580.00 | x |
+
+| Order | Harga Entry | Stop Loss | Take Profit | Jarak SL | Lot Aman | Risiko ($) | R:R | Waktu Berakhir (WIB) |
+|---|---|---|---|---|---|---|---|---|
+| Sell Limit Zona 2 (Intraday) | 3656.82 | 3684.00 | 3600.00 | 27.18 | 0.01 | $27.18 | 1:2.09 | 24 Nov 2026, 02:28 WIB |
+
+**Rincian Hitung Risiko:**
+- Sell Limit Zona 2 (Intraday): 0.01 x 27.18 x 100 = $27.18
+`;
+  for (const capPerDirection of [true, false]) {
+    const r = verifyRiskTables(md, 20, PAIRS.XAUUSD, NOW, { last: 3620.99, capPerDirection, zones: 3 });
+    assert.match(r.markdown, /\| Sell Limit Zona 2 \(Intraday\) \| Tidak Ada Setup \(Batas Risiko: Tidak Dipasang\) \|/);
+    assert.ok(r.notes.some((n) => /TIDAK DIPASANG/.test(n) && /lot minimum/.test(n)));
+    assert.equal(r.totals.SELL, 0);
+    const d = buildDecision({ markdown: r.markdown, bias: 'BEARISH', zoneRes: { SELL: { 2: { score: 5 } } } });
+    assert.equal(d.status, 'NO_TRADE');
+    assert.equal(d.primary, null);
+  }
+});
+
+test('INSUFFICIENT_DATA: data kurang bukan NO TRADE dan tidak mengeluarkan TRADE dari screenshot saja', () => {
+  assert.match(dataGap({ hasSnapshots: false }), /screenshot/);
+  assert.match(dataGap({ hasSnapshots: true, priceMismatch: true }), /PRICE MISMATCH/);
+  assert.match(dataGap({ hasSnapshots: true, analyses: [{ timeframe: 'M15', status: 'OK' }, { timeframe: 'H1', status: 'OK' }, { timeframe: 'H4', status: 'INSUFFICIENT_DATA' }] }), /H4/);
+  assert.equal(dataGap({ hasSnapshots: true, analyses: ['M15', 'H1', 'H4'].map((t) => ({ timeframe: t, status: 'OK' })) }), null);
+  const d = insufficientDecision('OHLC feed tidak tersedia.');
+  assert.equal(d.status, 'INSUFFICIENT_DATA');
+  assert.match(d.text, /DATA TIDAK CUKUP/);
+  assert.doesNotMatch(d.text, /SETUP UTAMA|NO TRADE/);
+  const md = insertDecision(D3, d.text);
+  assert.ok(md.indexOf('DATA TIDAK CUKUP') < md.indexOf('Ringkasan Cepat'));
+  assert.match(md, /^> ⚠️ \*\*KEPUTUSAN SERVER — ([^:*]+):\*\*/mu); // pola yang dibaca ResultView
+});

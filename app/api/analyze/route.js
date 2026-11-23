@@ -8,7 +8,7 @@ import { fixInlineTables } from '@/lib/markdownFix';
 import { buildFundamentalBlock } from '@/lib/calendar';
 import { verifyRiskTables, fixDailyClose } from '@/lib/riskCheck';
 import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
-import { buildDecision, insertDecision } from '@/lib/decision';
+import { buildDecision, insertDecision, insufficientDecision, dataGap } from '@/lib/decision';
 import { resolveBias, syncHeadlineBias, syncBiasLabels, syncTfBias, syncLevelLabels, syncExpiry } from '@/lib/consistency';
 import { getMarketSnapshots, marketContext, mt4SymbolForPair } from '@/lib/mt4Market';
 import { getCloudMarketSnapshots, cloudMarketContext, cloudProxyOf, applyBasis } from '@/lib/cloudMarket';
@@ -635,18 +635,6 @@ export async function POST(req) {
       }
     }
 
-    // Keputusan server: satu setup utama searah bias / countertrend saja / NO TRADE (dari tabel final + skor mesin)
-    let decision = null;
-    if (mt4ContextUsed?.snapshots?.length && markdown) {
-      try {
-        const rb = resolveBias(extractBias(markdown), mt4ContextUsed.smc?.higherBias);
-        decision = buildDecision({ markdown, bias: rb.bias, zoneRes: mt4ContextUsed.zoneRes, alignment: mt4ContextUsed.smc?.alignment ?? null });
-        markdown = insertDecision(markdown, decision.text);
-      } catch (e) {
-        console.error('[analyze] decision error:', e);
-      }
-    }
-
     let mt4Status = mt4ContextUsed?.snapshots?.length ? 'OHLC_HYBRID' : 'SCREENSHOT_ONLY';
     const mt4Report = mt4ContextUsed?.smc || null;
     let mt4PriceDeltaPct = null;
@@ -657,6 +645,21 @@ export async function POST(req) {
         mt4PriceDeltaPct = Math.abs(ref - lastPx) / lastPx * 100;
         const maxDelta = pairCfg.group === 'btc' ? 1.5 : pairCfg.group === 'gold' ? 1.0 : 0.6;
         if (mt4PriceDeltaPct > maxDelta) mt4Status = 'PRICE_MISMATCH';
+      }
+    }
+    // Keputusan server (dari tabel final + skor mesin): TRADE / COUNTERTREND_ONLY / NO_TRADE; data kurang = INSUFFICIENT_DATA (bukan "tidak ada peluang")
+    let decision = null;
+    if (markdown) {
+      try {
+        const gap = dataGap({ hasSnapshots: !!mt4ContextUsed?.snapshots?.length, analyses: mt4ContextUsed?.smc?.analyses, priceMismatch: mt4Status === 'PRICE_MISMATCH' });
+        if (gap) decision = insufficientDecision(gap);
+        else {
+          const rb = resolveBias(extractBias(markdown), mt4ContextUsed.smc?.higherBias);
+          decision = buildDecision({ markdown, bias: rb.bias, zoneRes: mt4ContextUsed.zoneRes, alignment: mt4ContextUsed.smc?.alignment ?? null });
+        }
+        markdown = insertDecision(markdown, decision.text);
+      } catch (e) {
+        console.error('[analyze] decision error:', e);
       }
     }
     // Reviewer OpenAI sengaja tidak dijalankan pada jalur live V2: menjaga batas waktu dan fokus pada validator deterministik.
