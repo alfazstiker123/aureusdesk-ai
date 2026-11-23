@@ -3,7 +3,7 @@ import { getSupabase, TABLE, BUCKET } from '@/lib/supabase';
 import { GEMINI_MODEL } from '@/lib/prompt';
 import { requirePin } from '@/lib/auth';
 import { getCalendar, calendarDebug } from '@/lib/calendar';
-import { gatewayChat, gatewayModels, gwConfigured, gwModelOf } from '@/lib/gateway';
+import { gatewayChat, gatewayModels, gwConfigured, gwModelOf, gwKey, gwBase } from '@/lib/gateway';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -62,7 +62,7 @@ export async function GET(req) {
       ]);
       const line = (label, g, want) => `${label}: ${g.ok ? (want(g.text) ? 'LOLOS' : 'GAGAL') + ` (model_dilaporkan=${g.model ?? '?'}, prompt_tokens=${g.usage?.prompt ?? '?'}, balas "${g.text.replace(/\s+/g, ' ').slice(0, 50)}")` : 'ERROR ' + g.error}`;
       out.gateway = [
-        `base=${String(process.env.OPENAI_COMPAT_BASE_URL || '').replace(/\/+$/, '')}, key=${process.env.OPENAI_COMPAT_API_KEY ? process.env.OPENAI_COMPAT_API_KEY.slice(0, 4) + '…' + process.env.OPENAI_COMPAT_API_KEY.slice(-4) : 'KOSONG'}`,
+        `base=${gwBase().replace(/\/+$/, '')}, key=${gwKey() ? gwKey().slice(0, 4) + '…' + gwKey().slice(-4) : 'KOSONG'}`,
         ...sizes.map((n, i) => line(`${n} char`, runs[i], (t) => /ALFA-731/.test(t) && /OMEGA-482/.test(t))),
         line('role system', runs[sizes.length], (t) => /SYSTEM-OK/.test(t)),
         line('STREAM+system', runs[sizes.length + 1], (t) => /SYSTEM-OK/.test(t)),
