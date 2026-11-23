@@ -56,12 +56,18 @@ export async function GET(req) {
       const runs = await Promise.all([
         ...sizes.map((n) => gatewayChat({ model, user: mk(n), maxTokens: 60, timeoutMs: 20000, temperature: 0 })),
         gatewayChat({ model, system: 'Jawab HANYA dengan kata: SYSTEM-OK', user: 'Halo', maxTokens: 20, timeoutMs: 20000, temperature: 0 }),
+        gatewayChat({ model, system: 'Jawab HANYA dengan kata: SYSTEM-OK', user: 'Halo', timeoutMs: 20000, stream: true }),
+        gatewayChat({ model, system: 'Jawab HANYA dengan kata: SYSTEM-OK', user: 'Halo', timeoutMs: 20000, minimal: true }),
+        gatewayChat({ model, user: mk(4000), timeoutMs: 20000, stream: true, minimal: true }),
       ]);
       const line = (label, g, want) => `${label}: ${g.ok ? (want(g.text) ? 'LOLOS' : 'GAGAL') + ` (model_dilaporkan=${g.model ?? '?'}, prompt_tokens=${g.usage?.prompt ?? '?'}, balas "${g.text.replace(/\s+/g, ' ').slice(0, 50)}")` : 'ERROR ' + g.error}`;
       out.gateway = [
         `base=${String(process.env.OPENAI_COMPAT_BASE_URL || '').replace(/\/+$/, '')}, key=${process.env.OPENAI_COMPAT_API_KEY ? process.env.OPENAI_COMPAT_API_KEY.slice(0, 4) + '…' + process.env.OPENAI_COMPAT_API_KEY.slice(-4) : 'KOSONG'}`,
         ...sizes.map((n, i) => line(`${n} char`, runs[i], (t) => /ALFA-731/.test(t) && /OMEGA-482/.test(t))),
         line('role system', runs[sizes.length], (t) => /SYSTEM-OK/.test(t)),
+        line('STREAM+system', runs[sizes.length + 1], (t) => /SYSTEM-OK/.test(t)),
+        line('BODY-MINIMAL+system', runs[sizes.length + 2], (t) => /SYSTEM-OK/.test(t)),
+        line('STREAM+MINIMAL 4000 char', runs[sizes.length + 3], (t) => /ALFA-731/.test(t) && /OMEGA-482/.test(t)),
       ].join(' | ');
     } else {
       const g = await gatewayChat({ model: gwModelOf(searchParams.get('model')), user: 'Balas satu kata: OK', maxTokens: 20, timeoutMs: 25000 });
