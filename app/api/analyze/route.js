@@ -8,6 +8,8 @@ import { fixInlineTables } from '@/lib/markdownFix';
 import { buildFundamentalBlock } from '@/lib/calendar';
 import { verifyRiskTables, fixDailyClose } from '@/lib/riskCheck';
 import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
+import { syncInvalidation, labelConfirmationLevels } from '@/lib/invalidation';
+import { spreadInfo, spreadWarnings } from '@/lib/spreadCheck';
 import { buildDecision, insertDecision, insufficientDecision, dataGap } from '@/lib/decision';
 import { resolveBias, isNeutralHeadline, syncHeadlineBias, syncBiasLabels, syncTfBias, syncLevelLabels, syncSummaryLevels, syncExpiry } from '@/lib/consistency';
 import { getConnectionSnapshots, marketContext, mt4SymbolForPair, snapshotSpreadMinutes } from '@/lib/mt4Market';
@@ -670,7 +672,7 @@ export async function POST(req) {
       let g = { notes: [], flags: { cancel: [], shift: [], fix: [] }, skipped: null, atr };
       if (strict && pairCfg) {
         try {
-          g = applyOrderGuard(md, { pair: pairCfg, bias: extractBias(txt), atr, zones });
+          g = applyOrderGuard(md, { pair: pairCfg, bias: extractBias(txt), atr, zones, spreadVerified: spreadInfo(mt4ContextUsed?.quote).valid });
           md = g.markdown;
         } catch (e) {
           console.error('[analyze] orderGuard error:', e);
@@ -693,6 +695,16 @@ export async function POST(req) {
         if (nr.mismatches.length) smcNotes = [...smcNotes, `⚠️ ${nr.mismatches.length} baris teks bebas masih memuat angka yang tidak bisa dipetakan ke satu zona: ikuti tabel Bagian 3/4B.`];
         // Pembatalan karena 4B sudah menolak order (batas risiko / R:R / lot) tidak mengubah total; hanya pembatalan lain yang perlu catatan
         if (rc2.cancelled.some((x) => !/tidak punya order/.test(x.why)) || rc2.mismatches.length) smcNotes = [...smcNotes, '⚠️ Ada setup dibatalkan pada tahap akhir: "Total risiko" di catatan verifikasi dihitung ulang dari order yang aktif.'];
+      }
+      // Invalidation (struktur) dipisah dari SL (batas risiko) dan diverifikasi terhadap level mesin SMC; peringatan zona sempit vs spread broker (hanya peringatan)
+      if (pairCfg && c.tablesChecked) {
+        const inv = syncInvalidation(md, { analyses: smcAnalyses, dec: pairCfg.dec });
+        md = inv.markdown;
+        const lab = labelConfirmationLevels(md, { dec: pairCfg.dec, items: inv.items });
+        md = lab.markdown;
+        const sp = spreadWarnings(md, { quote: mt4ContextUsed?.quote || null, dec: pairCfg.dec });
+        md = sp.markdown;
+        smcNotes = [...smcNotes, ...inv.notes, ...lab.notes, ...sp.notes];
       }
       // Catatan lama yang menyebut zona yang akhirnya batal (mis. "entry 3545.95 berjarak ...") dibuang agar tidak ada angka usang
       const dead = pairCfg ? deadKeys(md, { dec: pairCfg.dec }) : [];
