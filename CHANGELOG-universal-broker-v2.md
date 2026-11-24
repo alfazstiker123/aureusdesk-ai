@@ -25,3 +25,11 @@ Env baru: tidak wajib (opsional `MT4_SYMBOL_MAP` seperti sebelumnya).
 - Peringatan bila snapshot antar timeframe berselisih > 6 menit (`snapshotSpreadMinutes`).
 - Tes: 144/144 lulus. BOS/CHoCH, koordinat zona, auto-trading tidak disentuh.
 - Belum dikerjakan: pemetaan overlap OB/FVG, penurunan status berdasar MN/W1/D1 vs gaya trading, sinkron Bagian 3 vs 4B.
+
+## Audit #4 — sumber tunggal angka zona (Bagian 3 = 4B = Rincian Risiko)
+- Akar masalah SL 3605.00 vs 3605.27: sinkron SL Bagian 3→4B memakai toleransi 0.02×ATR H1 (± $0.3 pada emas), sehingga selisih kecil lolos; teks "R:R ~1:2.0" di kolom konfirmasi Bagian 3 juga tidak pernah dihitung ulang.
+- Baru `lib/finalSync.js`: baris 4B = sumber final Entry/SL/TP1. Tahap 1 (sebelum validator risiko): Bagian 3 mengikuti 4B; setup yang tak bisa diselaraskan dibatalkan di KEDUA tabel (entry 4B di luar zona Bagian 3, hanya satu tabel punya setup, TP/SL hilang atau salah arah) → WAIT / NO TRADE. Tahap 2 (setelah validator): Jarak SL, R:R, Risiko, teks R:R Bagian 3 dan Rincian Hitung Risiko dihitung ulang dari angka final; audit akhir membatalkan zona yang masih tidak selaras. TP2 yang tidak lebih jauh dari TP1 dikosongkan.
+- Toleransi sinkron SL di `enforceSmcZones` diperketat ke 1 tick.
+- Zona yang ditolak validator (lot < minimum / batas risiko) sekarang juga dikosongkan di Bagian 3 (tidak ada zona "hidup" tanpa order).
+- Tes: 160/160 lulus (16 baru: SL, TP1, TP2, entry, lot, risiko, R:R, rincian, SELL, fuzz 300 kasus, integrasi dengan validator risiko, urutan di route). Tes SL gagal pada kode lama.
+- Tidak diubah: mesin SMC, BOS/CHoCH, koordinat zona, auto-trading. Catatan: Ringkasan Cepat/Skenario Batal berupa teks bebas Gemini; angka zona di sana belum disinkronkan.

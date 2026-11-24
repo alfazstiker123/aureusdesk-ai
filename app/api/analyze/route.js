@@ -16,6 +16,7 @@ import { getCloudMarketSnapshots, cloudMarketContext, cloudProxyOf, applyBasis }
 import { metalsWeekendClosed, fmtMt4 } from '@/lib/marketTime';
 import { buildSmcReport, buildZoneCandidates, buildZoneCandidates3 } from '@/lib/smc/engine';
 import { enforceSmcZones, syncTargets, disableZoneRows } from '@/lib/smc/guard';
+import { reconcileZones, cancelMismatched } from '@/lib/finalSync';
 import { normalizeIdNumbers } from '@/lib/numFormat';
 import { fixWeekendExpiry, nextOpenMs } from '@/lib/weekendExpiry';
 
@@ -636,6 +637,14 @@ export async function POST(req) {
           console.error('[analyze] smcGuard error:', err);
         }
       }
+      // Sumber tunggal angka zona, tahap 1: samakan Entry/SL/TP1 Bagian 3 dengan 4B; setup yang tak bisa diselaraskan dibatalkan SEBELUM lot/risiko dihitung
+      const atrH1Sync = smcAnalyses?.find?.((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14 || 0;
+      const entryTolSync = atrH1Sync > 0 ? atrH1Sync * 0.1 : 0;
+      if (pairCfg) {
+        const rc1 = reconcileZones(txt, { dec: pairCfg.dec, entryTol: entryTolSync });
+        txt = rc1.markdown;
+        smcNotes = [...smcNotes, ...rc1.notes];
+      }
       const last = pairCfg ? parseLastPrice(txt, pairCfg) : null;
       const atr = pairCfg && last ? (marketAtr || parseATR(txt, pairCfg, last)) : null;
       const c = pairCfg
@@ -650,6 +659,18 @@ export async function POST(req) {
         } catch (e) {
           console.error('[analyze] orderGuard error:', e);
         }
+      }
+      // Tahap 2 (setelah validator & guard): hitung ulang turunan (jarak, R:R, risiko, rincian) dari angka final 4B, audit, batalkan bila masih tak selaras
+      if (pairCfg && c.tablesChecked) {
+        const rc2 = reconcileZones(md, { dec: pairCfg.dec, mult: c.mult, entryTol: entryTolSync });
+        md = rc2.markdown;
+        smcNotes = [...smcNotes, ...rc2.notes];
+        if (rc2.mismatches.length) {
+          const cm = cancelMismatched(md, rc2.mismatches);
+          md = cm.markdown;
+          smcNotes = [...smcNotes, ...cm.notes];
+        }
+        if (rc2.cancelled.length || rc2.mismatches.length) smcNotes = [...smcNotes, '⚠️ Ada setup dibatalkan pada tahap akhir: "Total risiko" di catatan verifikasi dihitung sebelum pembatalan (nilai sebenarnya lebih kecil).'];
       }
       // error yang layak generate ulang: arah entry salah (guard) + arah SL/TP salah (guard Bagian 3, riskCheck 4B)
       const fixes = [...(g.flags?.fix || []), ...(c.fixes || [])];
