@@ -127,3 +127,11 @@ Akar masalah (temuan #10.3): snapshot + konfigurasi identik bisa menghasilkan ke
 ### Audit #11.1 — Audit fallback lot minimum (`lotFor`)
 - `makeLotFor` dipindah ke `lib/engineOrders.js` agar bisa diuji. Anggaran < lot minimum → mengembalikan lot minimum HANYA supaya `verifyRiskTables` (tidak diubah) menolak order bila risiko pada lot minimum > batas. Fungsi itu tidak meloloskan order.
 - 6 tes baru (305/305): lot 0.007→NO TRADE, 0.01 dalam batas→lolos, 0.02 step 0.01→0.02, total risiko per arah benar setelah pembatalan, tidak ada lot di luar min/step/maks di 4B (4 spesifikasi × 7 anggaran), risiko per arah ≤ batas.
+
+## Audit #12 — Tahap 1: Alignment multi-timeframe (branch `feat/alignment-step1`, BELUM merge/deploy)
+- Temuan: label "Alignment H4/H1 ke M15: SELARAS" hanya membandingkan M15 dengan H4 (fallback H1); H1 tidak ikut. Kasus 24 Nov (H4 BULLISH, H1 BEARISH, M15 BULLISH) salah ditampilkan SELARAS.
+- `lib/smc/alignment.js` (baru): `alignmentOf` → SELARAS (H4, H1, M15 valid & sama) | CAMPURAN (ada yang berbeda, termasuk bila data tersedia sudah saling bertentangan) | TIDAK DAPAT DINILAI (data tidak cukup). M5/D1/W1 tidak ikut definisi.
+- `lib/smc/engine.js`: hanya label alignment (import + 4 baris) — hasil `analyses` (BOS/CHoCH/OB/FVG/swing/zona/ATR) identik lama vs baru (dibuktikan). `alignment` boolean|null tetap ada untuk kompatibilitas; ditambah `alignmentInfo`.
+- `lib/decision.js` + `route.js`: CAMPURAN menambah peringatan "Alignment CAMPURAN (H4 …, H1 …, M15 …): timeframe belum searah; tunggu konfirmasi sebelum entry." Status keputusan TIDAK berubah (hanya peringatan); jalur lama (`alignment:false` tanpa pesan) tetap.
+- Tidak diubah: deteksi BOS/CHoCH, OB/FVG, koordinat zona, rumus risiko, standar R:R, aturan TP. Tidak ada auto-trading.
+- Tes: 315/315 (305 lama + 10 baru).

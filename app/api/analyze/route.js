@@ -858,7 +858,7 @@ export async function POST(req) {
         else {
           const anl = mt4ContextUsed.smc?.analyses || [];
           const biasOf = (tf) => anl.find((x) => x.timeframe === tf && x.status === 'OK')?.bias;
-          decision = buildDecision({ markdown, bias: biasInfo.direction || 'NETRAL', neutral: biasInfo.neutral, zoneRes: mt4ContextUsed.zoneRes, alignment: mt4ContextUsed.smc?.alignment ?? null,
+          decision = buildDecision({ markdown, bias: biasInfo.direction || 'NETRAL', neutral: biasInfo.neutral, zoneRes: mt4ContextUsed.zoneRes, alignment: mt4ContextUsed.smc?.alignment ?? null, alignmentWarning: mt4ContextUsed.smc?.alignmentInfo?.warning ?? null,
             htf: { D1: biasOf('D1'), W1: biasOf('W1') }, atrM5: Number(anl.find((x) => x.timeframe === 'M5' && x.status === 'OK')?.atr14) || 0 });
           if (decision.htfConflict) {
             const before = markdown;
