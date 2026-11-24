@@ -77,3 +77,35 @@ test('Zona 1 OFF: porsi risiko 45/55 dan R:R Zona 2/3 disesuaikan di prompt', ()
   assert.match(blk, /Zona 2 \(Intraday\) minimal 1:1\.5.*TP2 sekitar 1:2\.5/);
   assert.match(blk, /Zona 3 \(Swing\) minimal 1:2 ke TP1.*1:3\.5/);
 });
+
+// ---- Peringatan server R:R Zona 3 (Swing) < 1:2 ----
+import os from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const tmpR = fs.mkdtempSync(path.join(os.tmpdir(), 'rr3-'));
+for (const f of ['riskCheck.js', 'pairs.js', 'marketTime.js', 'weekendExpiry.js', 'numFormat.js']) {
+  if (fs.existsSync(new URL(`../lib/${f}`, import.meta.url))) fs.writeFileSync(path.join(tmpR, f), fs.readFileSync(new URL(`../lib/${f}`, import.meta.url), 'utf8').replace(/'@\/lib\/([\w]+)'/g, "'./$1.js'"));
+}
+const { verifyRiskTables: vrt } = await import(pathToFileURL(path.join(tmpR, 'riskCheck.js')).href);
+const { PAIRS: PR } = await import(pathToFileURL(path.join(tmpR, 'pairs.js')).href);
+const mkTbl = (tp2, tp3) => `| Order | Harga Entry | Stop Loss | Take Profit | Jarak SL | Lot Aman | Risiko ($) | R:R | Waktu Berakhir (WIB) |
+|---|---|---|---|---|---|---|---|---|
+| Buy Limit Zona 2 (Intraday) | 3583.86 | 3574.28 | ${tp2} | 9.58 | 0.01 | $9.58 | 1:1 | 24 Nov 2026, 02:28 WIB |
+| Buy Limit Zona 3 (Swing) | 3553.97 | 3539.96 | ${tp3} | 14.01 | 0.01 | $14.01 | 1:1 | 24 Nov 2026, 05:00 WIB |
+`;
+const NOWR = new Date('2026-11-23T15:00:00Z');
+test('R:R Zona 3 < 1:2 diberi peringatan (mode 3 zona); Zona 2 pada R:R sama (1:1.7) tidak', () => {
+  // Z2 R:R = (3600.18-3583.86)/9.58 = 1.70 ; Z3 R:R = 23.82/14.01 = 1.70
+  const r = vrt(mkTbl('3600.18', '3577.79'), 100, PR.XAUUSD, NOWR, { last: 3620.99, capPerDirection: false, zones: 3 });
+  assert.ok(r.notes.some((n) => /Zona 3 \(Swing\).*di bawah standar Zona 3 Swing 1:2\.0/.test(n)), r.notes.join(' | '));
+  assert.ok(!r.notes.some((n) => /Zona 2 \(Intraday\).*di bawah standar/.test(n)), r.notes.join(' | '));
+});
+test('R:R Zona 3 >= 1:2 tidak diberi peringatan; angka tabel tidak diubah oleh aturan baru', () => {
+  const r = vrt(mkTbl('3600.18', '3583.00'), 100, PR.XAUUSD, NOWR, { last: 3620.99, capPerDirection: false, zones: 3 });
+  assert.ok(!r.notes.some((n) => /standar Zona 3/.test(n)), r.notes.join(' | '));
+  assert.match(r.markdown, /\| Buy Limit Zona 3 \(Swing\) \| 3553\.97 \| 3539\.96 \| 3583\.00 \| 14\.01 \| 0\.01 \| \$14\.01 \|/);
+});
+test('mode 2 zona: peringatan khusus Zona 3 tidak berlaku', () => {
+  const r = vrt(mkTbl('3600.18', '3577.79'), 100, PR.XAUUSD, NOWR, { last: 3620.99, capPerDirection: false, zones: 2 });
+  assert.ok(!r.notes.some((n) => /standar Zona 3/.test(n)));
+});
