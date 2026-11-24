@@ -322,3 +322,75 @@ test('route: prompt memuat order mesin; audit menyimpan tanda tangan order mesin
   assert.match(ROUTE, /engineOrdersPrompt\(computeEngine/);
   assert.match(ROUTE, /orders: \{ v: ENGINE_ORDERS_VERSION, sig: engUsed/);
 });
+
+// ───────────── Audit lotFor: fallback lot minimum tidak boleh meloloskan order di luar anggaran ─────────────
+const { makeLotFor } = await import('../lib/engineOrders.js');
+const { lotFloorSpec } = await import(pathToFileURL(path.join(tmp, 'brokerSpec.js')).href);
+const SPEC = (o = {}) => ({ minlot: 0.01, lotstep: 0.01, maxlot: 100, tickvalue: 1, ticksize: 0.01, accountCurrency: 'USD', ...o });
+function onlyBuy2(w) { // satu order saja (BUY Z2) agar anggaran = seluruh batas risiko
+  w.zoneRes = { BUY: { 2: w.zoneRes.BUY[2] }, SELL: {} };
+  return w;
+}
+function runSpec(riskUsd, spec, w = onlyBuy2(world())) {
+  const lf = makeLotFor(MULT, spec, lotFloorSpec);
+  const eng = buildEngineOrders({ zoneRes: w.zoneRes, analyses: w.analyses, price: PRICE, atrH1: ATR, dec: DEC, zones: 3, zonesOff: [1], riskUsd, lotFor: lf });
+  const z1 = lockToEngine(modelText({}), eng, { dec: DEC, zones: 3, now: NOW, fmtExp, parseExp: parseExpiryWIB, lotStr: (x) => x.toFixed(2) });
+  const e = enforceSmcZones(clearDeadDetail(z1.markdown, eng), { analyses: w.analyses, atrH1: ATR, price: PRICE, priceRe: px.priceRe, candidates: w.zoneRes });
+  const rc1 = reconcileZones(e.markdown, { dec: DEC });
+  const c = verifyRiskTables(rc1.markdown, riskUsd, px, NOW, { last: PRICE, capPerDirection: true, zones: 3, spec });
+  const rc2 = reconcileZones(c.markdown, { dec: DEC, mult: c.mult });
+  const md = rc2.mismatches.length ? cancelMismatched(rc2.markdown, rc2.mismatches).markdown : rc2.markdown;
+  return { eng, md, c };
+}
+const buyZ2 = (md) => md.split('\n').find((l) => /^\| Buy Limit Zona 2/.test(l));
+
+test('lotFor: anggaran hanya cukup 0.007 lot, min 0.01 -> fallback 0.01 tetapi validator menolak (NO TRADE)', () => {
+  const lf = makeLotFor(MULT, SPEC(), lotFloorSpec);
+  assert.equal(lf(26.29, 18.4), 0.01); // 18.4 / 2629 = 0.007 -> di bawah minimum -> 0.01 (hanya agar validator memutuskan)
+  const r = runSpec(18.4, SPEC());
+  assert.match(buyZ2(r.md), /Tidak Ada Setup \(Batas Risiko: Tidak Dipasang\)/);
+  assert.ok(!/\| 0\.01 \|/.test(buyZ2(r.md)));
+  assert.ok(r.c.notes.some((n) => /NO TRADE — risiko \$26\.29 pada lot minimum/.test(n)));
+  assert.equal(r.c.totals.BUY, 0); // total risiko arah BUY dihitung ulang setelah pembatalan
+  assert.ok(r.c.candidates.some((x) => x.side === 'BUY' && x.zone === 2 && x.dropped && x.drop?.kind === 'order'));
+});
+test('lotFor: lot hitung 0.01 (min 0.01) dengan risiko minimum dalam batas -> lolos', () => {
+  const r = runSpec(27, SPEC()); // 27/2629 = 0.0103 -> 0.01; risiko 26.29 <= 27
+  assert.match(buyZ2(r.md), /\| 3553\.31 \|[^\n]*\| 0\.01 \| \$26\.29 \|/);
+  assert.ok(Math.abs(r.c.totals.BUY - 26.29) < 0.006);
+});
+test('lotFor: lot hitung 0.02 (step 0.01) -> tetap 0.02', () => {
+  const r = runSpec(60, SPEC()); // 60/2629 = 0.0228 -> 0.02
+  assert.match(buyZ2(r.md), /\| 0\.02 \| \$52\.58 \|/);
+  assert.equal(r.eng.orders.find((o) => o.side === 'BUY' && o.zone === 2).lot, 0.02);
+});
+test('total risiko per arah benar setelah satu order dibatalkan (BUY Z2 ditolak, BUY Z3 lolos)', () => {
+  const w = world(); w.zoneRes = { BUY: w.zoneRes.BUY, SELL: {} };
+  const r = runSpec(26, SPEC(), w); // Z2 min-lot risiko 26.29 > 26 -> batal; Z3 23.56 lolos
+  assert.match(buyZ2(r.md), /Tidak Ada Setup \(Batas Risiko/);
+  const z3 = r.md.split('\n').find((l) => /^\| Buy Limit Zona 3/.test(l)).split('|').map((x) => x.trim());
+  assert.equal(z3[6], '0.01'); assert.equal(z3[7], '$23.56');
+  assert.ok(Math.abs(r.c.totals.BUY - 23.56) < 0.006);
+  assert.ok(r.c.totals.BUY <= 26.005);
+});
+test('tidak ada lot tidak valid (di bawah min / bukan kelipatan step / di atas maks) di 4B pada berbagai spesifikasi & anggaran', () => {
+  const specs = [SPEC(), SPEC({ minlot: 0.05, lotstep: 0.05 }), SPEC({ minlot: 0.1, lotstep: 0.1, maxlot: 0.5 }), SPEC({ lotstep: 0.001, minlot: 0.001 })];
+  for (const spec of specs) for (const risk of [5, 18.4, 26, 27, 60, 400, 5000]) {
+    const r = runSpec(risk, spec, world());
+    for (const l of r.md.split('\n').filter((x) => /^\| (Buy|Sell) Limit Zona/.test(x))) {
+      const c = l.split('|').slice(1, -1).map((x) => x.trim());
+      if (/Tidak Ada Setup/.test(c[1])) { assert.ok(c.slice(2, 8).every((x) => x === '-'), 'baris batal tidak memuat lot'); continue; }
+      const lot = Number(c[5]);
+      assert.ok(lot >= spec.minlot - 1e-9 && lot <= spec.maxlot + 1e-9, `lot ${lot} di luar min/maks (${JSON.stringify(spec)}, risiko ${risk})`);
+      const k = lot / spec.lotstep; assert.ok(Math.abs(k - Math.round(k)) < 1e-6, `lot ${lot} bukan kelipatan step ${spec.lotstep}`);
+    }
+    // Bagian 3 tidak punya kolom lot: tidak ada angka lot di sana
+    for (const l of r.md.split('\n').filter((x) => /^\| (BUY|SELL) Zona/.test(x))) assert.equal(l.split('|').length - 2, 6);
+  }
+});
+test('tidak ada order dengan risiko di atas batas per arah pada 4B (semua spesifikasi & anggaran)', () => {
+  for (const risk of [5, 18.4, 26, 27, 60, 400]) {
+    const r = runSpec(risk, SPEC(), world());
+    assert.ok(r.c.totals.BUY <= risk + 0.005 && r.c.totals.SELL <= risk + 0.005, `risiko ${risk}`);
+  }
+});

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { GEMINI_MODEL, GEMINI_FALLBACK_MODELS, buildSystemInstruction, buildUserPrompt, extractBias, zoneStyleAddendum, ZONE1_OFF_SYSTEM, OHLC_ONLY_SYSTEM } from '@/lib/prompt';
 import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice, resolvePair, parseATR, zoneRange, zoneRange3, rangeText, riskMult } from '@/lib/pairs';
-import { buildEngineOrders, lockToEngine, clearDeadDetail, engineSkeleton, engineOrdersPrompt, ordersSignature, finalTableSignature, ENGINE_ORDERS_VERSION } from '@/lib/engineOrders';
+import { buildEngineOrders, makeLotFor, lockToEngine, clearDeadDetail, engineSkeleton, engineOrdersPrompt, ordersSignature, finalTableSignature, ENGINE_ORDERS_VERSION } from '@/lib/engineOrders';
 import { gatewayChat, gwConfigured, gwModelOf, looksLikeAnalysis } from '@/lib/gateway';
 import { EXTRACT_SYSTEM, EXTRACT_SCHEMA, normalizeExtract, buildCandidates, formatDataBlock, STAGE2_ADDENDUM } from '@/lib/extract';
 import { requirePin } from '@/lib/auth';
@@ -399,10 +399,7 @@ export async function POST(req) {
         if (!pair || !an?.length || !ctx?.zoneRes || !(px > 0)) return null;
         const spec = ctx.brokerSpec || null;
         const RM = riskMult(pair, px, { spec });
-        const lotFor = (dist, budget) => {
-          const l = lotFloorSpec(budget / (dist * RM.mult), spec);
-          return l > 0 ? l : (spec?.minlot > 0 ? spec.minlot : 0.01);
-        };
+        const lotFor = makeLotFor(RM.mult, spec, lotFloorSpec);
         const atrH1 = an.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14 || 0;
         const eng = buildEngineOrders({ zoneRes: ctx.zoneRes, analyses: an, price: px, atrH1, dec: pair.dec, zones, zonesOff, riskUsd, lotFor });
         eng.mult = RM.mult; eng.lotStr = (x) => x.toFixed(Math.max(2, stepDecimals(spec?.lotstep > 0 ? spec.lotstep : 0.01)));

@@ -123,3 +123,7 @@ Akar masalah (temuan #10.3): snapshot + konfigurasi identik bisa menghasilkan ke
 - Dampak yang disengaja: setup yang dulu lolos berkat TP model/fallback kelipatan R kini bisa jadi NO TRADE.
 - Batasan: jalur 4A (order user dari screenshot, `applyOrderGuard`) masih memakai teks bias model; baris "Sudah Terpasang" berasal dari bacaan screenshot Gemini. Determinisme berlaku untuk snapshot+konfigurasi identik; candle baru tentu mengubah hasil.
 - Tes: 299/299 (274 lama + 25 baru: TP1 sisi benar/R:R standar/batas jarak, tanpa TP valid, 50× variasi teks Gemini → tabel final identik, klaim keputusan Gemini tak berpengaruh, kerangka saat Gemini gagal, wiring route). Belum diuji live; tidak ada `next build` lokal.
+
+### Audit #11.1 — Audit fallback lot minimum (`lotFor`)
+- `makeLotFor` dipindah ke `lib/engineOrders.js` agar bisa diuji. Anggaran < lot minimum → mengembalikan lot minimum HANYA supaya `verifyRiskTables` (tidak diubah) menolak order bila risiko pada lot minimum > batas. Fungsi itu tidak meloloskan order.
+- 6 tes baru (305/305): lot 0.007→NO TRADE, 0.01 dalam batas→lolos, 0.02 step 0.01→0.02, total risiko per arah benar setelah pembatalan, tidak ada lot di luar min/step/maks di 4B (4 spesifikasi × 7 anggaran), risiko per arah ≤ batas.
