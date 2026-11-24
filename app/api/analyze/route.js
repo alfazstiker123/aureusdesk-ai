@@ -706,7 +706,7 @@ export async function POST(req) {
             (m) => syncTfBias(m, smcAnalyses),
             (m) => syncLevelLabels(m, smcAnalyses, feedPx),
             (m) => syncSummaryLevels(m, smcAnalyses, feedPx),
-            (m) => syncExpiry(m, new Date(), pairCfg),
+            (m) => syncExpiry(m, new Date(), pairCfg, { zones, zonesOff }),
           ]) {
             const r = fix(txt);
             txt = r.markdown;
