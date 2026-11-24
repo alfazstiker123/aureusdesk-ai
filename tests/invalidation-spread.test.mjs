@@ -87,7 +87,7 @@ function pipeline(md, { status = 'WAIT', dir = null, quote = QUOTE, analyses = A
   return { inv, lab, sp, fo, md: fo.markdown, notes: [...inv.notes, ...lab.notes, ...sp.notes] };
 }
 const line = (md, re) => md.split('\n').find((l) => re.test(l));
-const scen = (md) => { const a = md.split('\n'); const i = a.findIndex((l) => /Skenario Batal/.test(l)); const out = []; for (let k = i + 1; k < a.length && (/^\s*$/.test(a[k]) || /^\s*-/.test(a[k])); k++) if (a[k].trim()) out.push(a[k]); return out; };
+const scen = (md) => { const a = md.split('\n'); const i = a.findIndex((l) => /Skenario Batal/.test(l)); const out = []; for (let k = i + 1; k < a.length && (/^\s*$/.test(a[k]) || /^\s*[-*•]/.test(a[k])); k++) if (a[k].trim()) out.push(a[k]); return out; };
 
 // ================= P0: Invalidation vs SL =================
 const LV = structuralLevels(ANALYSES);
@@ -386,4 +386,146 @@ test('route: validator terpasang di runChecks setelah rekonsiliasi akhir dan seb
   const iSp = src.indexOf('spreadWarnings(md');
   const iDead = src.indexOf('const dead = pairCfg ? deadKeys');
   assert.ok(iRec > 0 && iInv > iRec && iSp > iInv && iDead > iSp);
+});
+
+// ================= HOTFIX: format kalimat live tanpa titik dua (XAUUSD 24 Nov 2026 15:05 WIB) =================
+const LIVE3 = `**BIAS UTAMA:** NETRAL - WAIT & SEE
+**PAIR:** XAUUSD
+**HARGA TERAKHIR:** 3623.42
+
+> **Ringkasan Cepat**
+> - Rencana: Tunggu pullback ke zona struktur; jangan kejar harga di tengah range.
+
+### 3. Pemetaan Setup Eksekusi Langsung (Confirmation Entry)
+
+| Zona & Strategi | Zona Entry | Stop Loss (SL) | Take Profit 1 (TP1) | Take Profit 2 (TP2) | Syarat Konfirmasi Candlestick |
+|---|---|---|---|---|---|
+| BUY Zona 1 - Scalping (M15 FVG Demand) - Dasar: M15 FVG bullish 3608.25-3610.83 fresh (Netral - Tunggu Konfirmasi) | 3608.25 - 3610.83 | 3606.82 | 3616.84 | 3631.87 | Buy limit 3610.83; butuh bullish engulfing/close M5 di atas 3611.00. R:R TP1 ±1:1.50. |
+| BUY Zona 2 - Intraday (Demand H1-H4) - Dasar: tidak ada FVG/OB bullish fresh di rentang ini (Netral - Tunggu Konfirmasi) | Tidak ada level valid (tunggu) | - | - | - | - |
+| SELL Zona 1 - Scalping (M5-M15 Supply) - Dasar: tidak ada FVG/OB bearish fresh dekat harga (Netral - Tunggu Konfirmasi) | Tidak ada level valid (tunggu) | - | - | - | - |
+| SELL Zona 2 - Intraday (M15 FVG/OB) - Dasar: M15 FVG bearish 3642.72-3646.46; M15 OB 3645.07-3659.76; H1 FVG 3642.72-3652.99 (Netral - Tunggu Konfirmasi) | 3642.72 - 3646.46 | 3662.61 | 3612.73 | 3600.40 | Sell limit 3642.72; butuh bearish rejection/close M15 di bawah 3642.72. R:R TP1 ±1:1.51. |
+
+### 4. Rekomendasi Susunan Pending Order
+
+**4B. Order Baru yang Disarankan**
+
+| Order | Harga Entry | Stop Loss | Take Profit | Jarak SL | Lot Aman | Risiko ($) | R:R | Waktu Berakhir (WIB) |
+|---|---|---|---|---|---|---|---|---|
+| Sell Limit Zona 1 (Scalping Supply) (Netral - Tunggu Konfirmasi) | Tidak Ada Setup (Tunggu) | - | - | - | - | - | - | - |
+| Sell Limit Zona 2 (Intraday FVG/OB M15) (Netral - Tunggu Konfirmasi) | 3642.72 | 3662.61 | 3612.73 | 19.89 | 0.01 | $19.89 | 1:1.51 | 24 Nov 2026, 19.09 WIB |
+| Buy Limit Zona 1 (Scalping M15 FVG) (Netral - Tunggu Konfirmasi) | 3610.83 | 3606.82 | 3616.84 | 4.01 | 0.01 | $4.01 | 1:1.50 | 24 Nov 2026, 17.09 WIB |
+| Buy Limit Zona 2 (Intraday Demand) (Netral - Tunggu Konfirmasi) | Tidak Ada Setup (Tunggu) | - | - | - | - | - | - | - |
+
+**Rincian Hitung Risiko**
+
+- Sell Limit Zona 2: 0.01 lot x 19.89 x 100 = $19.89
+- Buy Limit Zona 1: 0.01 lot x 4.01 x 100 = $4.01
+
+**Skenario Batal (Invalidation Level)**
+
+- Sell Zona 2 batal jika H1 close di atas 3662.61, atau M15 close di atas 3646.46 setelah sweep.
+- Buy Zona 1 batal jika M15 close di bawah 3606.82.
+- WAIT / NO TRADE — Sell Zona 3: tidak ada order (setup dibatalkan / belum valid; lihat Bagian 3 dan 4B); saat ini tidak dipasang karena batas risiko arah.
+- WAIT / NO TRADE — Buy Zona 3: tidak ada order (setup dibatalkan / belum valid; lihat Bagian 3 dan 4B); saat ini tidak dipasang karena risiko minimum sudah melebihi batas.
+- Hapus pending jika TP1 tersentuh sebelum order terisi.
+
+**Manajemen Posisi**
+
+- Ambil partial 50% di TP1, lalu pindahkan SL ke break-even setelah profit ±1R.
+`;
+const Q3 = { bid: 3623.42, ask: 3623.78 };
+const pipe3 = (md, o = {}) => pipeline(md, { quote: Q3, ...o });
+const SEL_LINE = 'Sell Zona 2 batal jika H1 close di atas 3662.61, atau M15 close di atas 3646.46 setelah sweep.';
+const BUY_LINE = 'Buy Zona 1 batal jika M15 close di bawah 3606.82.';
+
+test('HOTFIX unit: baris tanpa titik dua dikenali (batal jika / invalid jika / batal apabila / SELL Z2 / Sell Limit)', () => {
+  const variants = [
+    ['- Buy Zona 1 batal jika M15 close di bawah 3606.82.', 'Buy Zona 1'],
+    ['- Buy Zona 1: M15 close di bawah 3606.82.', 'Buy Zona 1'],
+    ['- SELL Z2 invalid jika H1 close di atas 3662.61.', 'Sell Zona 2'],
+    ['- Sell Limit Zona 2 batal apabila H1 close di atas 3662.61.', 'Sell Zona 2'],
+    ['- **Sell Zona 2** batal jika H1 close di atas 3662.61.', 'Sell Zona 2'],
+    ['* Sell Zona 2 – batal jika H1 close di atas 3662.61.', 'Sell Zona 2'],
+  ];
+  for (const [src, name] of variants) {
+    const md = LIVE3.replace(/- Sell Zona 2 batal jika[^\n]*\n- Buy Zona 1 batal jika[^\n]*\n/, `${src}\n`);
+    const r = pipe3(md);
+    const l = scen(r.md).find((x) => x.includes(`${name}: SL`));
+    assert.ok(l, `${src}\n${scen(r.md).join('\n')}`);
+    assert.doesNotMatch(l, /close di (?:atas|bawah) 3606\.82|close di atas 3662\.61/);
+  }
+});
+
+test('HOTFIX live SELL Zona 2: SL 3662.61 bukan invalidation; 3646.46 = tepi atas zona (bukan di luar zona) -> dibuang; hasil "belum terdefinisi"', () => {
+  const r = pipe3(LIVE3);
+  const l = line(r.md, /^- Sell Zona 2:/);
+  assert.ok(l, scen(r.md).join('\n'));
+  assert.match(l, /SL 3662\.61 = batas risiko posisi/);
+  assert.ok(l.includes(UNDEFINED_TEXT));
+  assert.doesNotMatch(l, /Invalidation struktural: /);
+  assert.doesNotMatch(r.md, /Sell Zona 2 batal jika/);
+  const it = r.inv.items.find((x) => x.key === 'SELL2');
+  assert.deepEqual(it.dropped.map((d) => [d.level, d.kind]), [[3662.61, 'sl'], [3646.46, 'wrong']]);
+});
+
+test('HOTFIX live BUY Zona 1: SL 3606.82 tidak lolos sebagai invalidation; tidak ada level pengganti karangan -> "belum terdefinisi"', () => {
+  const r = pipe3(LIVE3);
+  const l = line(r.md, /^- Buy Zona 1:/);
+  assert.ok(l, scen(r.md).join('\n'));
+  assert.match(l, /SL 3606\.82 = batas risiko posisi/);
+  assert.ok(l.includes(UNDEFINED_TEXT));
+  assert.doesNotMatch(l, /3600\.40|3611\.46|3613\.52/); // level struktur lain ada di mesin, tetapi server tidak memilihkan pengganti
+  assert.doesNotMatch(r.md, /Buy Zona 1 batal jika/);
+});
+
+test('HOTFIX: level struktur valid pada kalimat tanpa titik dua tetap dipertahankan; tanpa TF/close ditandai manual', () => {
+  const md = LIVE3.replace(BUY_LINE, 'Buy Zona 1 batal jika H1 close di bawah 3600.40.').replace(SEL_LINE, 'Sell Zona 2 batal jika harga tembus 3678.03 atau H1 close di atas 3662.61.');
+  const r = pipe3(md);
+  assert.match(line(r.md, /^- Buy Zona 1:/), /Invalidation struktural: candle H1 close di bawah 3600\.40 \(swing low utuh/);
+  const s = line(r.md, /^- Sell Zona 2:/);
+  assert.match(s, /harga menembus 3678\.03/);
+  assert.match(s, /TF & kondisi candle konfirmasi belum ditentukan/);
+  assert.doesNotMatch(s, /close di atas 3662\.61/);
+});
+
+test('HOTFIX: Entry/SL/TP/R:R/lot/risiko/koordinat zona identik sebelum dan sesudah syncInvalidation', () => {
+  const r = pipe3(LIVE3);
+  const p1 = reconcileZones(LIVE3, { dec: DEC });
+  const c = verifyRiskTables(p1.markdown, 26, PAIRS.XAUUSD, new Date('2026-11-24T08:05:00Z'), { last: 3623.42, capPerDirection: true, zones: 3 });
+  const p2 = reconcileZones(c.markdown, { dec: DEC, mult: c.mult });
+  const pre = syncNarrative(p2.markdown, { dec: DEC, stale: [...p1.changes, ...p2.changes] }).markdown;
+  const grab = (md) => md.split('\n').filter((l) => /^\| (?:BUY|SELL|Buy|Sell)/.test(l)).map((l) => l.split('|').slice(2, 9).map((x) => x.trim().replace(/\s*⚠️ ZONA SEMPIT[^|]*$/, '')).join('|'));
+  assert.deepEqual(grab(r.md), grab(pre));
+  const led = ledgerOf(r.md, { dec: DEC });
+  assert.deepEqual([led.get('SELL2').entry, led.get('SELL2').sl, led.get('SELL2').tp1, led.get('SELL2').risk, led.get('SELL2').lo, led.get('SELL2').hi], [3642.72, 3662.61, 3612.73, 19.89, 3642.72, 3646.46]);
+  assert.deepEqual([led.get('BUY1').entry, led.get('BUY1').sl, led.get('BUY1').tp1, led.get('BUY1').risk, led.get('BUY1').lo, led.get('BUY1').hi], [3610.83, 3606.82, 3616.84, 4.01, 3608.25, 3610.83]);
+});
+
+test('HOTFIX: idempoten pada laporan live (baris yang sudah ditulis ulang tidak diproses lagi)', () => {
+  const r = pipe3(LIVE3);
+  const i2 = syncInvalidation(r.md, { analyses: ANALYSES, dec: DEC });
+  assert.equal(i2.markdown, r.md);
+  assert.deepEqual(i2.notes, []);
+  const lab = labelConfirmationLevels(i2.markdown, { dec: DEC, items: [] });
+  assert.equal(lab.markdown, r.md);
+});
+
+test('HOTFIX: kalimat WAIT / NO TRADE dan baris tanpa zona tidak rusak', () => {
+  const r = pipe3(LIVE3);
+  for (const k of ['Sell Zona 3', 'Buy Zona 3']) {
+    const l = line(r.md, new RegExp(`^- WAIT / NO TRADE — ${k}:`));
+    assert.ok(l, k);
+    assert.match(l, /tidak ada order \(setup dibatalkan \/ belum valid; lihat Bagian 3 dan 4B\); saat ini tidak dipasang karena/);
+    assert.doesNotMatch(l, /SL \d|Invalidation struktural/);
+  }
+  assert.ok(r.md.includes('- Hapus pending jika TP1 tersentuh sebelum order terisi.'));
+  assert.ok(r.md.includes('**Manajemen Posisi**'));
+});
+
+test('HOTFIX: BUY dan SELL diproses sekaligus; zona aktif tanpa baris tidak menambah level', () => {
+  const r = pipe3(LIVE3);
+  const names = scen(r.md).filter((l) => /: SL \d/.test(l)).map((l) => l.replace(/^- /, '').split(':')[0]).sort();
+  assert.deepEqual(names, ['Buy Zona 1', 'Sell Zona 2']);
+  assert.equal(r.inv.items.filter((x) => x.added).length, 0);
+  assert.ok(r.inv.items.every((x) => x.undefinedInvalidation));
 });
