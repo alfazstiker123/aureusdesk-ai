@@ -252,3 +252,35 @@ test('batas risiko per arah: tidak ada lot tidak valid tersisa (semua aktif >= m
   const total = lots.reduce((a, b) => a + b, 0) * 100; // $/lot x lot
   assert.ok(total <= 60 + 0.01 || lots.length === 1, `total ${total}`);
 });
+
+test('properti: batas risiko per arah — kombinasi acak tidak pernah lolos melebihi batas, semua lot aktif valid', () => {
+  let seed = 12345; const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const specs = [
+    normalizeSpec(specOf({ minlot: 0.01, lotstep: 0.01, maxlot: 100, accountCurrency: 'USD' })).spec,
+    normalizeSpec(specOf({ minlot: 0.1, lotstep: 0.1, maxlot: 5, accountCurrency: 'USD' })).spec,
+    normalizeSpec(specOf({ minlot: 0.25, lotstep: 0.25, maxlot: 10, accountCurrency: 'USD' })).spec,
+    normalizeSpec(specOf({ minlot: 0.125, lotstep: 0.125, maxlot: 10, accountCurrency: 'USD' })).spec,
+  ];
+  let checked = 0;
+  for (let n = 0; n < 400; n++) {
+    const sp = specs[n % specs.length];
+    const side = rnd() < 0.5 ? 'Buy' : 'Sell';
+    const rows = [1, 2, 3].slice(0, 1 + Math.floor(rnd() * 3)).map((z) => {
+      const dist = +(0.5 + rnd() * 30).toFixed(2), entry = 3600 + z * 5;
+      const sl = side === 'Buy' ? entry - dist : entry + dist, tp = side === 'Buy' ? entry + dist * 2 : entry - dist * 2;
+      return [`${side} Limit Zona ${z}`, entry.toFixed(2), sl.toFixed(2), tp.toFixed(2), (sp.minlot * (1 + Math.floor(rnd() * 12))).toFixed(3)];
+    });
+    const maxRisk = +(10 + rnd() * 3000).toFixed(2);
+    const r = verifyRiskTables(tbl2(rows), maxRisk, PAIRS.XAUUSD, NOW, { capPerDirection: true, zones: 3, spec: sp, last: 3601 });
+    let total = 0;
+    for (const l of r.markdown.split('\n').filter((x) => /^\|\s*(Buy|Sell)/i.test(x) && !/Tidak Ada Setup/.test(x))) {
+      const c = l.split('|').map((x) => x.trim());
+      const lot = Number(c[6]), dist = Math.abs(Number(c[2]) - Number(c[3]));
+      assert.ok(lot >= sp.minlot - 1e-9 && lot <= sp.maxlot + 1e-9, `lot ${lot} di luar min/max`);
+      assert.ok(Math.abs(lot / sp.lotstep - Math.round(lot / sp.lotstep)) < 1e-6, `lot ${lot} bukan kelipatan step ${sp.lotstep}`);
+      total += lot * dist * 100; checked++;
+    }
+    assert.ok(total <= maxRisk + 0.02, `total risiko ${total.toFixed(2)} > batas ${maxRisk} (iterasi ${n})`);
+  }
+  assert.ok(checked > 100, 'cukup banyak order aktif teruji');
+});

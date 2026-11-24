@@ -16,3 +16,4 @@ Env baru: tidak wajib (opsional `MT4_SYMBOL_MAP` seperti sebelumnya).
 - P0 satuan tick: validasi ticksize kelipatan point + tickValue/tickSize harus cocok contract size (kuotasi USD & akun USD); EA mencetak baris `AureusDesk SPEC` untuk verifikasi manual di Headway. BELUM diverifikasi dengan nilai Headway nyata.
 - P1 lot step pecahan (0.25/0.125) kelipatan step, presisi dari step sebenarnya.
 - Audit lanjutan: lot hasil AI < minLot broker kini langsung NO TRADE (baris dibatalkan, tidak dinaikkan, tidak dipertahankan), baik dengan/tanpa batas risiko user; lot > maxLot dipotong ke maxLot; lot dibulatkan ke kelipatan step. Berlaku juga di jalur batas risiko per arah.
+- Uji properti (400 kombinasi acak, 4 profil lot) untuk batas risiko per arah: total risiko order aktif tidak melebihi batas, semua lot aktif valid. Menemukan & memperbaiki bug tampilan: lot 0.625 (step 0.125) tertulis 0.63; kini tampilan memakai presisi step.
