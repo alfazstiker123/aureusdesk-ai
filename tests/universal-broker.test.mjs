@@ -144,11 +144,6 @@ test('lot step / min / max broker dipatuhi', () => {
   assert.equal(lotFloorSpec(0.037, { lotstep: 0.001, minlot: 0.001, maxlot: 10 }), 0.037);
   assert.equal(lotFloorSpec(0.037, null), 0.03);
 });
-test('lot di tabel disesuaikan ke step broker (0.05 -> 0.1 min)', () => {
-  const sp = normalizeSpec(specOf({ minlot: 0.1, lotstep: 0.1, accountCurrency: 'USD' })).spec;
-  const r = run(PAIRS.XAUUSD, tbl('Buy Limit Zona 1', '3600.00', '3599.50', '3610.00', '0.05', '$2.50'), { spec: sp, last: 3600.2 });
-  assert.ok(r.notes.some((n) => /disesuaikan ke 0\.1/.test(n)));
-});
 test('spek tidak tersedia + requireSpec: peringatan eksplisit, tanpa klaim akurat', () => {
   const r = run(PAIRS.NAS100, tbl('Buy Limit Zona 1', '20000.0', '19950.0', '20100.0', '0.10', '$5.00'), { last: 20010, requireSpec: true, specWhy: 'EA tidak mengirim spesifikasi' });
   assert.ok(r.notes.some((n) => /SPESIFIKASI BROKER TIDAK TERSEDIA/.test(n) && /BUKAN akurat/.test(n)));
@@ -214,4 +209,46 @@ test('P1: lot step pecahan 0.25 / 0.125 selalu kelipatan step', () => {
   assert.equal(lotFloorSpec(0.375, s125), 0.375);
   assert.equal(lotFloorSpec(50, { minlot: 0.25, lotstep: 0.25, maxlot: 5.1 }), 5);
   for (const x of [0.26, 0.5, 1.37, 2.99, 4.9]) { const v = lotFloorSpec(x, s25); assert.ok(Math.abs(v / 0.25 - Math.round(v / 0.25)) < 1e-9, String(v)); }
+});
+
+const tbl2 = (rows) => `| Order | Harga Entry | Stop Loss | Take Profit | Jarak SL | Lot Aman | Risiko ($) | R:R | Waktu Berakhir (WIB) |
+|---|---|---|---|---|---|---|---|---|
+${rows.map((r) => `| ${r[0]} | ${r[1]} | ${r[2]} | ${r[3]} | - | ${r[4]} | $1.00 | 1:1 | 24 Nov 2026, 02:28 WIB |`).join('\n')}
+`;
+const activeLots = (md) => md.split('\n').filter((l) => /^\|\s*(Buy|Sell)/i.test(l) && !/Tidak Ada Setup/.test(l)).map((l) => Number(l.split('|')[6]));
+test('regresi audit: lot AI 0.03 < minLot 0.10 -> baris dibatalkan (NO TRADE), 0.03 tidak tampil sebagai order aktif', () => {
+  const sp = normalizeSpec(specOf({ minlot: 0.1, lotstep: 0.1, accountCurrency: 'USD' })).spec;
+  for (const maxRisk of [100, 0]) { // dengan dan tanpa batas risiko user
+    const r = verifyRiskTables(tbl2([['Buy Limit Zona 1', '3600.00', '3599.00', '3610.00', '0.03']]), maxRisk, PAIRS.XAUUSD, NOW, { capPerDirection: true, spec: sp, last: 3601 });
+    assert.match(r.markdown, /Tidak Ada Setup/);
+    assert.deepEqual(activeLots(r.markdown), []);
+    assert.ok(r.notes.some((n) => /NO TRADE/.test(n) && /0\.0?3/.test(n) && /minimum broker/.test(n)));
+  }
+  // tanpa spesifikasi (min 0.01): 0.005 juga tidak valid
+  const ns = verifyRiskTables(tbl2([['Buy Limit Zona 1', '3600.00', '3599.00', '3610.00', '0.005']]), 100, PAIRS.XAUUSD, NOW, { capPerDirection: true, last: 3601 });
+  assert.match(ns.markdown, /Tidak Ada Setup/);
+});
+test('lot valid tetap lolos; lot di atas maxLot dipotong ke maxLot (kelipatan step)', () => {
+  const sp = normalizeSpec(specOf({ minlot: 0.1, lotstep: 0.1, maxlot: 5, accountCurrency: 'USD' })).spec;
+  const ok = verifyRiskTables(tbl2([['Buy Limit Zona 1', '3600.00', '3599.99', '3610.00', '0.30']]), 100000, PAIRS.XAUUSD, NOW, { capPerDirection: false, spec: sp, last: 3601 });
+  assert.deepEqual(activeLots(ok.markdown), [0.3]);
+  const over = verifyRiskTables(tbl2([['Buy Limit Zona 1', '3600.00', '3599.99', '3610.00', '9.00']]), 100000, PAIRS.XAUUSD, NOW, { capPerDirection: false, spec: sp, last: 3601 });
+  assert.deepEqual(activeLots(over.markdown), [5]);
+  assert.ok(over.notes.some((n) => /disesuaikan ke 5/.test(n)));
+});
+test('lot step pecahan 0.25 di tabel: hasil selalu kelipatan 0.25 dan >= min', () => {
+  const sp = normalizeSpec(specOf({ minlot: 0.25, lotstep: 0.25, maxlot: 10, accountCurrency: 'USD' })).spec;
+  const r = verifyRiskTables(tbl2([['Buy Limit Zona 1', '3600.00', '3599.99', '3610.00', '0.74']]), 100000, PAIRS.XAUUSD, NOW, { capPerDirection: false, spec: sp, last: 3601 });
+  assert.deepEqual(activeLots(r.markdown), [0.5]);
+});
+test('batas risiko per arah: tidak ada lot tidak valid tersisa (semua aktif >= minLot & kelipatan step)', () => {
+  const sp = normalizeSpec(specOf({ minlot: 0.1, lotstep: 0.1, maxlot: 50, accountCurrency: 'USD' })).spec;
+  // dua order BUY: jarak 1.0 -> $100/lot; masing-masing 0.5 lot = $50; total $100; batas $60 -> perlu dipotong per arah
+  const md = tbl2([['Buy Limit Zona 1', '3600.00', '3599.00', '3610.00', '0.50'], ['Buy Limit Zona 2', '3590.00', '3589.00', '3610.00', '0.50']]);
+  const r = verifyRiskTables(md, 60, PAIRS.XAUUSD, NOW, { capPerDirection: true, spec: sp, last: 3601 });
+  const lots = activeLots(r.markdown);
+  assert.ok(lots.length >= 1);
+  for (const l of lots) { assert.ok(l >= 0.1 - 1e-9, String(l)); assert.ok(Math.abs(l / 0.1 - Math.round(l / 0.1)) < 1e-9, String(l)); }
+  const total = lots.reduce((a, b) => a + b, 0) * 100; // $/lot x lot
+  assert.ok(total <= 60 + 0.01 || lots.length === 1, `total ${total}`);
 });
