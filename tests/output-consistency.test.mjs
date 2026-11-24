@@ -219,3 +219,37 @@ test('kabel: route memanggil syncSummaryPlan & flagStaleStructure setelah syncOr
   assert.ok(r.indexOf('syncOrderLabels(markdown, biasInfo.final)') < r.indexOf('syncSummaryPlan(markdown'));
   assert.match(r, /flagStaleStructure\(markdown, mt4ContextUsed\?\.smc\?\.analyses/);
 });
+
+// ---- Perbaikan baris total ganda ("- Total BUY: Total risiko per arah ...") ----
+{
+  const base = () => fs.readFileSync(new URL('./fixtures/report-xauusd-24nov.md', import.meta.url), 'utf8').replace(/\r/g, '');
+  const run = (line) => {
+    const md = base().replace(/^- Total risiko arah SELL[^\n]*$/m, line);
+    const r = finalizeOrders(md, { status: 'COUNTERTREND_ONLY', dir: 'BUY', maxRiskUsd: 26, dec: 2 });
+    return r.markdown.split('\n').filter((l) => /Total risiko per arah/.test(l) && !/^\s*>/.test(l));
+  };
+  const SENT = /^- Total risiko per arah \(order yang lolos validator, termasuk kandidat yang belum boleh dipasang\): BUY \$0\.00 \| SELL \$20\.90 \(batas \$26\.00 per arah\)\.$/;
+  const variants = {
+    'format riskCheck "- Total BUY: $x (...) | Total SELL: $y (...)"': '- Total BUY: $6.85 (batas $26.00 per arah) | Total SELL: $2.92 (batas $26.00 per arah)',
+    'format tebal "- **Total BUY:** $x | **Total SELL:** $y"': '- **Total BUY:** $6.85 | **Total SELL:** $2.92',
+    'format polos "- Total BUY $x | Total SELL $y"': '- Total BUY $6.85 | Total SELL $2.92',
+    'format urutan SELL dulu "- Total SELL: $y | Total BUY: $x"': '- Total SELL: $2.92 | Total BUY: $6.85',
+    'format "Total risiko arah SELL = ... Total arah BUY = ..."': '- Total risiko arah SELL = $18.62 (aman). Total arah BUY = $16.56 (aman).',
+  };
+  for (const [name, line] of Object.entries(variants)) {
+    test(`total risiko: ${name} → satu kalimat server, tanpa awalan "Total BUY:" ganda`, () => {
+      const out = run(line);
+      assert.equal(out.length, 1);
+      assert.match(out[0], SENT);
+      assert.doesNotMatch(out[0], /Total (BUY|SELL)\s*:/i);
+    });
+  }
+  test('total risiko: angka total sama untuk semua format (BUY $0.00 | SELL $20.90) dan idempoten', () => {
+    for (const line of Object.values(variants)) {
+      const md = base().replace(/^- Total risiko arah SELL[^\n]*$/m, line);
+      const a = finalizeOrders(md, { status: 'COUNTERTREND_ONLY', dir: 'BUY', maxRiskUsd: 26, dec: 2 }).markdown;
+      const b = finalizeOrders(a, { status: 'COUNTERTREND_ONLY', dir: 'BUY', maxRiskUsd: 26, dec: 2 }).markdown;
+      assert.equal(b, a);
+    }
+  });
+}
