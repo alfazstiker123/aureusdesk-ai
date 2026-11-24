@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react';
 import CandleSvg, { detectPattern } from '@/components/CandleSvg';
+import { ORDER_STATUS, ORDER_STATUS_KEYS, orderKey, planOf, estimatePnl, buildResult } from '@/lib/orderResults';
 
 async function copyText(text) {
   try {
@@ -143,7 +144,102 @@ export function ExecCards({ rows, decimals, onGuide }) {
   );
 }
 
-export function PendingCards({ rows, decimals }) {
+
+const nowLocalInput = () => {
+  const d = new Date(Date.now() + 7 * 3600 * 1000); // WIB
+  return d.toISOString().slice(0, 16);
+};
+const wibInputToIso = (v) => (v ? new Date(`${v}:00+07:00`).toISOString() : null);
+const isoToWibInput = (iso) => (iso ? new Date(new Date(iso).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 16) : '');
+
+// Hasil order (evaluasi): status + harga keluar + P/L; R & slippage dihitung otomatis dari rencana order.
+function OrderResultBox({ row, saved, enabled, onSave }) {
+  const key = orderKey(row);
+  const plan = planOf(row);
+  const [open, setOpen] = useState(false);
+  const [status, setStatus] = useState(saved?.status || '');
+  const [exit, setExit] = useState(saved?.exit ?? '');
+  const [pnl, setPnl] = useState(saved?.pnl ? Math.abs(saved.pnl) : '');
+  const [at, setAt] = useState(isoToWibInput(saved?.at));
+  const [note, setNote] = useState(saved?.note || '');
+  const [busy, setBusy] = useState(false);
+  if (!key) return null;
+  const meta = saved ? ORDER_STATUS[saved.status] : null;
+  const money = (n) => `${n > 0 ? '+' : n < 0 ? '-' : ''}$${Math.abs(n).toFixed(2)}`;
+  const preview = status ? (() => { try { return buildResult({ status, exit, pnl, at, note }, plan); } catch { return null; } })() : null;
+  const est = estimatePnl(plan, Number(exit));
+
+  const save = async (clear = false) => {
+    setBusy(true);
+    const ok = await onSave(key, clear ? null : { ...preview, at: wibInputToIso(at) || (status === 'RUNNING' ? null : new Date().toISOString()) });
+    setBusy(false);
+    if (ok) setOpen(false);
+  };
+
+  return (
+    <div className="border-t border-line/50 pt-2 text-[11px]">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-semibold text-gold">Hasil</span>
+        {saved && !open ? (
+          <span className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+            <span className={`rounded-full border px-2 py-0.5 font-bold ${meta?.cls}`}>{meta?.label}</span>
+            {saved.pnl ? <span className={`font-mono font-bold ${saved.pnl > 0 ? 'text-up' : 'text-down'}`}>{money(saved.pnl)}</span> : null}
+            {saved.r != null ? <span className="font-mono text-muted">{saved.r > 0 ? '+' : ''}{saved.r}R</span> : null}
+            <button type="button" onClick={() => setOpen(true)} className="font-bold text-aurum hover:underline">Ubah</button>
+          </span>
+        ) : !open ? (
+          <button type="button" disabled={!enabled} onClick={() => { setStatus(''); setOpen(true); }} className="font-bold text-aurum hover:underline disabled:cursor-not-allowed disabled:text-muted disabled:no-underline">
+            {enabled ? '+ Catat hasil' : 'Simpan analisa ke Riwayat dulu'}
+          </button>
+        ) : null}
+      </div>
+      {saved?.slip != null && saved.slip !== 0 && !open && (
+        <p className="mt-1 text-right text-muted">{saved.status === 'SL' ? 'Slippage SL' : 'Selisih TP'}: {saved.slip > 0 ? '+' : ''}{saved.slip} (+ lebih buruk dari rencana)</p>
+      )}
+      {open && (
+        <div className="mt-2 space-y-2 rounded-xl border border-line/70 bg-night/70 p-2.5">
+          <div className="flex flex-wrap gap-1.5">
+            {ORDER_STATUS_KEYS.map((k) => (
+              <button key={k} type="button" onClick={() => setStatus(k)} className={`rounded-full border px-2.5 py-1 font-bold ${status === k ? ORDER_STATUS[k].cls + ' ring-1 ring-current' : 'border-line text-muted'}`}>
+                {ORDER_STATUS[k].label}
+              </button>
+            ))}
+          </div>
+          {status && status !== 'EXPIRED' && (
+            <div className="grid grid-cols-2 gap-2">
+              <label className="space-y-0.5"><span className="text-muted">Harga keluar</span>
+                <input inputMode="decimal" value={exit} onChange={(e) => setExit(e.target.value)} placeholder={status === 'SL' ? row.sl : status === 'TP' ? row.tp : ''} className="input w-full font-mono" /></label>
+              <label className="space-y-0.5"><span className="text-muted">P/L ($) {Number.isFinite(est) ? `· est. ${Math.abs(est)}` : ''}</span>
+                <input inputMode="decimal" value={pnl} onChange={(e) => setPnl(e.target.value)} placeholder={Number.isFinite(est) ? String(Math.abs(est)) : 'otomatis dari harga'} className="input w-full font-mono" /></label>
+            </div>
+          )}
+          {status && (
+            <div className="grid grid-cols-2 gap-2">
+              <label className="space-y-0.5"><span className="text-muted">Waktu (WIB)</span>
+                <input type="datetime-local" value={at} max={nowLocalInput()} onChange={(e) => setAt(e.target.value)} className="input w-full" /></label>
+              <label className="space-y-0.5"><span className="text-muted">Catatan</span>
+                <input value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} placeholder="mis. sl gap/slip" className="input w-full" /></label>
+            </div>
+          )}
+          {preview && preview.status !== 'EXPIRED' && preview.status !== 'RUNNING' && (
+            <p className="text-muted">
+              Hasil: <b className={preview.pnl >= 0 ? 'text-up' : 'text-down'}>{money(preview.pnl)}</b>
+              {preview.r != null ? <> · <b>{preview.r > 0 ? '+' : ''}{preview.r}R</b></> : null}
+              {preview.slip != null ? <> · slippage {preview.slip > 0 ? '+' : ''}{preview.slip}</> : null}
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            {saved && <button type="button" disabled={busy} onClick={() => save(true)} className="btn-ghost px-3 py-1.5 text-[11px] text-down">Hapus</button>}
+            <button type="button" onClick={() => setOpen(false)} className="btn-ghost px-3 py-1.5 text-[11px]">Batal</button>
+            <button type="button" disabled={!status || busy} onClick={() => save(false)} className="btn btn-gold px-3 py-1.5 text-[11px] disabled:opacity-50">{busy ? 'Menyimpan…' : 'Simpan'}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function PendingCards({ rows, decimals, analysisId = null, orderResults = null, onSaveOrder = null }) {
   return (
     <div className="my-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
       {rows.map((r, i) => {
@@ -191,6 +287,7 @@ export function PendingCards({ rows, decimals }) {
               <span className="flex-none font-semibold text-gold">Waktu Berakhir</span>
               <span className="text-right text-soft">{r.expiry || '-'}</span>
             </div>
+            {onSaveOrder && <OrderResultBox key={`${analysisId}-${orderKey(r)}-${orderResults?.[orderKey(r)]?.status || ''}`} row={r} saved={orderResults?.[orderKey(r)]} enabled={!!analysisId} onSave={onSaveOrder} />}
           </div>
         );
       })}

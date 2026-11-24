@@ -6,7 +6,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const LIST_COLUMNS =
-  'id, created_at, pair, account_balance, risk_percent, session_label, summary_bias, thumbnails, outcome, pnl_usd, eval_notes';
+  'id, created_at, pair, account_balance, risk_percent, session_label, summary_bias, thumbnails, outcome, pnl_usd, eval_notes, order_results';
 
 // GET /api/history -> daftar riwayat (tanpa markdown agar ringan)
 export async function GET(req) {

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { PERIODS, OUTCOME_META, periodRange, filterByPeriod, computeStats, toCSV } from '@/lib/stats';
+import { computeOrderStats } from '@/lib/orderResults';
 
 export function biasTone(bias = '') {
   const b = bias.toUpperCase();
@@ -44,7 +45,7 @@ function Stat({ label, children, sub, className = '' }) {
   );
 }
 
-function Dashboard({ stats, period, setPeriod, custom, setCustom, rangeText, onExport, canExport }) {
+function Dashboard({ stats, orderStats, period, setPeriod, custom, setCustom, rangeText, onExport, canExport }) {
   const best = stats.bestSession;
   return (
     <div className="space-y-3 border-b border-line p-3">
@@ -136,6 +137,28 @@ function Dashboard({ stats, period, setPeriod, custom, setCustom, rangeText, onE
           </>
         )}
       </div>
+
+      {orderStats?.all.n > 0 && (
+        <div className="rounded-lg border border-line bg-panel2 p-3">
+          <p className="text-[10px] uppercase tracking-wider text-muted">Rekap Hasil Order (4B)</p>
+          <p className="mt-1 text-xs">
+            {orderStats.all.n} order dicatat · <span className="text-up">{orderStats.all.tp} Hit TP</span> · <span className="text-down">{orderStats.all.sl} Hit SL</span> · {orderStats.all.cutP} Cut Profit · {orderStats.all.cutL} Cut Loss · {orderStats.all.expired} Expired · {orderStats.all.running} jalan
+          </p>
+          <p className="mt-1 text-[11px] text-muted">
+            Win rate order tertutup: {orderStats.all.winRate == null ? '-' : `${orderStats.all.winRate.toFixed(0)}% (${orderStats.all.closed} order)`} · Rata-rata R: {orderStats.all.avgR ?? '-'} · Expired: {orderStats.all.expiredPct == null ? '-' : `${orderStats.all.expiredPct.toFixed(0)}%`} · Slippage SL rata-rata: {orderStats.all.avgSlip ?? '-'} · Total <span className={pnlCls(orderStats.all.pnl)}>{fmtUsd(orderStats.all.pnl)}</span>
+          </p>
+          <ul className="mt-2 space-y-1">
+            {[...orderStats.zones, ...orderStats.sides].map((z) => (
+              <li key={z.name} className="flex items-center justify-between gap-2 text-[11px]">
+                <span className="min-w-0 truncate text-muted">{z.name}</span>
+                <span className="flex-none text-muted">{z.tp + z.cutP}W/{z.sl + z.cutL}L · {z.expired} exp{z.winRate != null ? ` · ${z.winRate.toFixed(0)}%` : ''}</span>
+                <span className={`w-20 flex-none text-right font-semibold ${pnlCls(z.pnl)}`}>{fmtUsd(z.pnl)}</span>
+              </li>
+            ))}
+          </ul>
+          {orderStats.all.closed < 100 && <p className="mt-2 text-[10px] text-muted">Sampel baru {orderStats.all.closed} order tertutup; angka ini catatan, belum bukti akurasi (target ≥100).</p>}
+        </div>
+      )}
 
       <button type="button" onClick={onExport} disabled={!canExport} className="btn-ghost w-full px-3 py-2 text-xs">
         ⬇️ Export Rekap ke CSV / Excel
@@ -259,6 +282,7 @@ export default function HistoryPanel({ items, loading, error, activeId, onOpen, 
     [periodItems, activePair]
   );
   const stats = useMemo(() => computeStats(filtered), [filtered]);
+  const orderStats = useMemo(() => computeOrderStats(filtered), [filtered]);
   const selIds = useMemo(() => filtered.filter((i) => selected.has(i.id)).map((i) => i.id), [filtered, selected]);
   const toggle = (id) =>
     setSelected((s) => {
@@ -349,6 +373,7 @@ export default function HistoryPanel({ items, loading, error, activeId, onOpen, 
 
       <Dashboard
         stats={stats}
+        orderStats={orderStats}
         period={period}
         setPeriod={setPeriod}
         custom={custom}

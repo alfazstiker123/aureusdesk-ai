@@ -88,3 +88,7 @@ create policy "aureus_storage_delete" on storage.objects
 
 -- v3: candle untuk peta zona (opsional)
 alter table public.trading_analyses add column if not exists candles jsonb;
+
+-- v4: hasil per order 4B (Hit TP/SL, Cut Profit/Loss, Expired) untuk evaluasi & rekap
+alter table public.trading_analyses add column if not exists order_results jsonb not null default '{}'::jsonb;
+grant update (order_results) on public.trading_analyses to anon, authenticated;

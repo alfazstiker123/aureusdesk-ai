@@ -9,7 +9,7 @@ import { ExecCards, PendingCards } from '@/components/ZoneCards';
 
 // Bagian 3 & 4: tabel zona/order ditampilkan sebagai kartu; teks lain tetap Markdown.
 // Tabel asli tetap bisa dibuka (lipatan) sebagai cadangan.
-function SectionBody({ body, n, priceDecimals, onGuide }) {
+function SectionBody({ body, n, priceDecimals, onGuide, orderCtx }) {
   const segs = useMemo(() => (n === 3 || n === 4 ? segmentSection(fixInlineTables(body || '')) : null), [body, n]);
   if (!segs || !segs.some((x) => x.type === 'exec' || x.type === 'pending')) {
     return <MarkdownView content={body} priceDecimals={priceDecimals} />;
@@ -23,7 +23,7 @@ function SectionBody({ body, n, priceDecimals, onGuide }) {
               {x.type === 'exec' ? (
                 <ExecCards rows={x.rows} decimals={priceDecimals} onGuide={onGuide} />
               ) : (
-                <PendingCards rows={x.rows} decimals={priceDecimals} />
+                <PendingCards rows={x.rows} decimals={priceDecimals} analysisId={orderCtx?.analysisId} orderResults={orderCtx?.orderResults} onSaveOrder={orderCtx?.onSaveOrder} />
               )}
               <details className="mb-3 print:hidden">
                 <summary className="cursor-pointer text-[11px] text-muted hover:text-ink">Lihat tabel asli</summary>
@@ -40,7 +40,7 @@ function SectionBody({ body, n, priceDecimals, onGuide }) {
 }
 
 // Navigasi cepat antar bagian hasil analisa. mode: jump | tab | accordion | off
-export default function SectionNav({ content, priceDecimals, mode = 'jump', onGuide }) {
+export default function SectionNav({ content, priceDecimals, mode = 'jump', onGuide, orderCtx = null }) {
   const parts = useMemo(() => splitSections(content), [content]);
   const [active, setActive] = useState(null); // bagian aktif (tab) / terakhir dipilih
   const [open, setOpen] = useState({}); // accordion
@@ -173,7 +173,7 @@ export default function SectionNav({ content, priceDecimals, mode = 'jump', onGu
               </button>
             )}
             <div className={visible ? '' : 'hidden print:block'}>
-              <SectionBody body={s.body} n={s.n} priceDecimals={priceDecimals} onGuide={onGuide} />
+              <SectionBody body={s.body} n={s.n} priceDecimals={priceDecimals} onGuide={onGuide} orderCtx={orderCtx} />
             </div>
           </section>
         );

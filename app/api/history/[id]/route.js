@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabase, TABLE, BUCKET } from '@/lib/supabase';
 import { requirePin } from '@/lib/auth';
+import { isOrderKey, sanitizeResult } from '@/lib/orderResults';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -60,6 +61,24 @@ export async function PATCH(req, { params }) {
     if (!UUID_RE.test(id)) return NextResponse.json({ error: 'ID tidak valid.' }, { status: 400 });
 
     const body = await req.json().catch(() => null);
+
+    // Hasil per order 4B (Hit TP/SL, Cut, Expired): body { order_key: 'SELL-Z1', result: {...} | null (hapus) }
+    if (body && body.order_key !== undefined) {
+      if (!isOrderKey(body.order_key)) return NextResponse.json({ error: 'Kunci order tidak valid.' }, { status: 400 });
+      let clean = null;
+      if (body.result) {
+        try { clean = sanitizeResult(body.result); } catch (e) { return NextResponse.json({ error: e.message }, { status: 400 }); }
+      }
+      const sb = getSupabase();
+      const { data: cur, error: gErr } = await sb.from(TABLE).select('order_results').eq('id', id).single();
+      if (gErr) throw gErr;
+      const next = { ...(cur?.order_results || {}) };
+      if (clean) next[body.order_key] = clean; else delete next[body.order_key];
+      const { data, error } = await sb.from(TABLE).update({ order_results: next }).eq('id', id).select('id, order_results').single();
+      if (error) throw error;
+      return NextResponse.json({ item: data });
+    }
+
     const outcome = String(body?.outcome || '').toUpperCase();
     if (!OUTCOMES.includes(outcome)) {
       return NextResponse.json({ error: 'Outcome tidak valid.' }, { status: 400 });

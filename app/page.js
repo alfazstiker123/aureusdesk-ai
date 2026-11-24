@@ -354,6 +354,7 @@ export default function Home() {
         },
         thumbnails: it.thumbnails || [],
         candles: it.candles || null,
+        orderResults: it.order_results || {},
       });
       setActiveId(it.id);
       setError('');
@@ -381,6 +382,27 @@ export default function Home() {
       return true;
     } catch (e) {
       showToast(e.message || 'Gagal menyimpan evaluasi.');
+      return false;
+    }
+  }
+
+  // Simpan/hapus hasil satu order 4B (Hit TP/SL, Cut, Expired) pada analisa yang sedang dibuka
+  async function saveOrderResult(orderKey, result) {
+    if (!activeId) { showToast('Simpan analisa ke Riwayat dulu.'); return false; }
+    try {
+      const res = await apiFetch(`/api/history/${activeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_key: orderKey, result }),
+      });
+      const data = await safeJson(res);
+      if (!res.ok) throw new Error(data.error);
+      setResult((r) => (r ? { ...r, orderResults: data.item.order_results || {} } : r));
+      setHistory((h) => h.map((x) => (x.id === activeId ? { ...x, order_results: data.item.order_results || {} } : x)));
+      showToast(result ? '✅ Hasil order tersimpan' : 'Hasil order dihapus');
+      return true;
+    } catch (e) {
+      showToast(e.message || 'Gagal menyimpan hasil order.');
       return false;
     }
   }
@@ -527,6 +549,7 @@ export default function Home() {
         meta: { created_at: createdAt, session, balance: Number(balance), risk: Number(risk), pair: data.pair || (pair !== 'AUTO' ? pair : null) },
         thumbnails: [],
         candles: data.candles || null,
+        orderResults: {},
       });
       setTab('analisa');
 
@@ -959,7 +982,7 @@ export default function Home() {
                 ))}
               </div>
 
-              <ResultView candles={result.candles} content={result.markdown} priceDecimals={priceDecimals} mode={navMode} pairId={result.meta?.pair} onToast={showToast} />
+              <ResultView candles={result.candles} content={result.markdown} priceDecimals={priceDecimals} mode={navMode} pairId={result.meta?.pair} onToast={showToast} orderCtx={{ analysisId: activeId, orderResults: result.orderResults || {}, onSaveOrder: saveOrderResult }} />
             </div>
           )}
 
