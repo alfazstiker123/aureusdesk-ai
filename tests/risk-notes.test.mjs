@@ -120,7 +120,7 @@ test('baris total risiko lepas di luar blok juga dihitung ulang (tidak menyisaka
   const md = LIVE2.replace('**Rincian Hitung Risiko**', 'Total SELL (Z2+Z3) = $37.76 melebihi batas.\n\n**Rincian Hitung Risiko**');
   const r = run(md);
   assert.doesNotMatch(r.md, /37\.76/);
-  assert.match(r.md, /Total risiko per arah \(dihitung ulang dari order aktif\): BUY \$20\.48 \| SELL \$19\.98 \(batas \$26\.00 per arah\)\./);
+  assert.match(r.md, /Total risiko per arah \(order yang lolos validator, termasuk kandidat yang belum boleh dipasang\): BUY \$20\.48 \| SELL \$19\.98 \(batas \$26\.00 per arah\)\./);
 });
 
 test('teks R:R Bagian 3 bergaya "±1:1,5" (koma desimal, tanda ±) ikut diganti R:R final', () => {

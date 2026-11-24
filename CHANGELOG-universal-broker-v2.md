@@ -157,3 +157,8 @@ Sumber: laporan XAUUSD 24 Nov 22:01 (deploy b01fc28). Hanya TEKS yang diperbaiki
 - `route.js`: memanggil dua langkah itu sesudah `syncOrderLabels`; catatan masuk Catatan sistem.
 - Tes: 377/377 (357 + 20 di `tests/output-consistency.test.mjs`, memakai fixture laporan nyata `tests/fixtures/report-xauusd-24nov.md`); 9 tes baru gagal bila `finalSync.js`/`biasFinal.js` dikembalikan ke versi main (kontrol negatif).
 - Belum ditangani (di luar 4 temuan; tercatat): Ringkasan "Level kunci" masih menyebut 3643.50 sebagai invalidasi padahal Skenario Batal menyatakan bukan level struktur; "Masa Berlaku Sinyal … Zona 2 … Daily Close" salah menyebut Daily Close untuk zona Intraday; teks Rencana tidak mengambil jendela No-Trade Zone dari kalender server.
+
+### Audit #13 — revisi redaksi sebelum merge (audit reviewer)
+- Kalimat total risiko di catatan verifikasi: "Total risiko per arah (dihitung ulang dari order aktif)" → "Total risiko per arah (order yang lolos validator, termasuk kandidat yang belum boleh dipasang)". Hanya teks; angka, order, dan keputusan tidak berubah.
+- Tes yang mengunci kalimat lama (risk-notes, invalidation-spread) disesuaikan ke kalimat baru. Total: 377/377.
+- Tetap di daftar berikutnya: level invalidation 3643.50 pada Ringkasan; jam No-Trade Zone di Rencana masih dari teks model.

@@ -630,7 +630,7 @@ test('AUDIT P0 total risiko: kandidat ditolak (Sell Z3, Buy Z2) tidak disebut se
   const totalsLines = r.md.split('\n').filter((l) => /Total risiko per arah/.test(l));
   assert.ok(totalsLines.length >= 1);
   for (const l of totalsLines) assert.match(l, /BUY \$21\.78 \| SELL \$19\.89/);
-  assert.equal(r.md.split('\n').filter((l) => /^- Total risiko per arah \(dihitung ulang/.test(l)).length, 1);
+  assert.equal(r.md.split('\n').filter((l) => /^- Total risiko per arah \(order yang lolos validator, termasuk kandidat/.test(l)).length, 1);
   const detail = sec(r.md, /Rincian Hitung Risiko/);
   assert.match(detail, /Sell Limit Zona 3: tidak ada order/);
   assert.match(detail, /Buy Limit Zona 2: tidak ada order/);
