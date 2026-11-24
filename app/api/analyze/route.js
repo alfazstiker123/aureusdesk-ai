@@ -16,7 +16,7 @@ import { getCloudMarketSnapshots, cloudMarketContext, cloudProxyOf, applyBasis }
 import { metalsWeekendClosed, fmtMt4 } from '@/lib/marketTime';
 import { buildSmcReport, buildZoneCandidates, buildZoneCandidates3 } from '@/lib/smc/engine';
 import { enforceSmcZones, syncTargets, disableZoneRows } from '@/lib/smc/guard';
-import { reconcileZones, cancelMismatched } from '@/lib/finalSync';
+import { reconcileZones, cancelMismatched, syncNarrative } from '@/lib/finalSync';
 import { normalizeIdNumbers } from '@/lib/numFormat';
 import { fixWeekendExpiry, nextOpenMs } from '@/lib/weekendExpiry';
 
@@ -638,11 +638,11 @@ export async function POST(req) {
         }
       }
       // Sumber tunggal angka zona, tahap 1: samakan Entry/SL/TP1 Bagian 3 dengan 4B; setup yang tak bisa diselaraskan dibatalkan SEBELUM lot/risiko dihitung
-      const atrH1Sync = smcAnalyses?.find?.((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14 || 0;
-      const entryTolSync = atrH1Sync > 0 ? atrH1Sync * 0.1 : 0;
+      let staleChanges = [];
       if (pairCfg) {
-        const rc1 = reconcileZones(txt, { dec: pairCfg.dec, entryTol: entryTolSync });
+        const rc1 = reconcileZones(txt, { dec: pairCfg.dec });
         txt = rc1.markdown;
+        staleChanges = rc1.changes;
         smcNotes = [...smcNotes, ...rc1.notes];
       }
       const last = pairCfg ? parseLastPrice(txt, pairCfg) : null;
@@ -662,7 +662,7 @@ export async function POST(req) {
       }
       // Tahap 2 (setelah validator & guard): hitung ulang turunan (jarak, R:R, risiko, rincian) dari angka final 4B, audit, batalkan bila masih tak selaras
       if (pairCfg && c.tablesChecked) {
-        const rc2 = reconcileZones(md, { dec: pairCfg.dec, mult: c.mult, entryTol: entryTolSync });
+        const rc2 = reconcileZones(md, { dec: pairCfg.dec, mult: c.mult });
         md = rc2.markdown;
         smcNotes = [...smcNotes, ...rc2.notes];
         if (rc2.mismatches.length) {
@@ -670,6 +670,11 @@ export async function POST(req) {
           md = cm.markdown;
           smcNotes = [...smcNotes, ...cm.notes];
         }
+        // Teks bebas (Ringkasan Cepat, Skenario Batal, Manajemen Posisi, kesimpulan) mengikuti angka final; zona batal -> WAIT / NO TRADE
+        const nr = syncNarrative(md, { dec: pairCfg.dec, stale: [...staleChanges, ...rc2.changes] });
+        md = nr.markdown;
+        if (nr.notes.length) smcNotes = [...smcNotes, `📝 ${nr.notes.length} baris teks bebas disamakan dengan tabel final (Entry/SL/TP/R:R/lot/risiko).`];
+        if (nr.mismatches.length) smcNotes = [...smcNotes, `⚠️ ${nr.mismatches.length} baris teks bebas masih memuat angka yang tidak bisa dipetakan ke satu zona: ikuti tabel Bagian 3/4B.`];
         if (rc2.cancelled.length || rc2.mismatches.length) smcNotes = [...smcNotes, '⚠️ Ada setup dibatalkan pada tahap akhir: "Total risiko" di catatan verifikasi dihitung sebelum pembatalan (nilai sebenarnya lebih kecil).'];
       }
       // error yang layak generate ulang: arah entry salah (guard) + arah SL/TP salah (guard Bagian 3, riskCheck 4B)

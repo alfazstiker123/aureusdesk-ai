@@ -33,3 +33,10 @@ Env baru: tidak wajib (opsional `MT4_SYMBOL_MAP` seperti sebelumnya).
 - Zona yang ditolak validator (lot < minimum / batas risiko) sekarang juga dikosongkan di Bagian 3 (tidak ada zona "hidup" tanpa order).
 - Tes: 160/160 lulus (16 baru: SL, TP1, TP2, entry, lot, risiko, R:R, rincian, SELL, fuzz 300 kasus, integrasi dengan validator risiko, urutan di route). Tes SL gagal pada kode lama.
 - Tidak diubah: mesin SMC, BOS/CHoCH, koordinat zona, auto-trading. Catatan: Ringkasan Cepat/Skenario Batal berupa teks bebas Gemini; angka zona di sana belum disinkronkan.
+
+## Audit #5 — tutup celah finalSync + sinkron teks bebas
+- P0-A: zona aktif yang hanya ada di satu tabel (tanpa baris pasangan) tidak lagi dilewati: dibatalkan di Bagian 3/4B dan rincian risiko; audit menandainya (`pasangan`).
+- P0-B: toleransi entry diperketat dari 0.1×ATR H1 menjadi 1 tick pembulatan. Opsi `entryTol` dihapus dari route dan diabaikan di modul; entry di luar zona Bagian 3 → setup dibatalkan.
+- Teks bebas (Ringkasan Cepat, Skenario Batal, Manajemen Posisi, kesimpulan): `syncNarrative` menulis ulang Entry/SL/TP1/TP2/R:R/lot/risiko berlabel dari tabel final, mengganti angka lama yang diubah server (mis. SL 3605.00 → 3605.27), dan mengubah rujukan zona yang batal/tidak punya setup menjadi "WAIT / NO TRADE". Klausa yang memuat dua zona dengan angka berlabel diganti rujukan ke tabel. Tabel, blok kode, dan catatan "Verifikasi risiko otomatis" tidak disentuh. Idempoten + audit (`auditNarrative`).
+- Tes: 175/175 lulus (31 tes finalSync, termasuk fuzz 300 + 200 kasus dan integrasi dengan validator risiko).
+- Tidak diubah: mesin SMC, BOS/CHoCH, koordinat zona, auto-trading. Belum: pemetaan overlap OB/FVG (tahap 3), konteks MN/W1/D1 menurut gaya trading (tahap 4). Batasan: angka tanpa label (mis. "close di bawah 3605.00") hanya diganti bila sama dengan angka lama yang diubah server.

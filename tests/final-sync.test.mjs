@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { reconcileZones, auditZoneNumbers, cancelMismatched } from '../lib/finalSync.js';
+import { reconcileZones, auditZoneNumbers, cancelMismatched, syncNarrative, auditNarrative, ledgerOf } from '../lib/finalSync.js';
 import { enforceSmcZones } from '../lib/smc/guard.js';
 import { buildDecision } from '../lib/decision.js';
 
@@ -168,7 +168,7 @@ test('enforceSmcZones: SL beda 0.27 tetap disamakan walau ATR besar (akar masala
 
 test('route memakai sinkron final: tahap 1 sebelum validator risiko, tahap 2 dengan pengali final + audit + pembatalan', () => {
   const src = fs.readFileSync(new URL('../app/api/analyze/route.js', import.meta.url), 'utf8');
-  assert.match(src, /import \{ reconcileZones, cancelMismatched \} from '@\/lib\/finalSync'/);
+  assert.match(src, /import \{ reconcileZones, cancelMismatched, syncNarrative \} from '@\/lib\/finalSync'/);
   const i1 = src.indexOf('reconcileZones(txt');
   const iRisk = src.indexOf('verifyRiskTables(txt');
   const i2 = src.indexOf('reconcileZones(md');
@@ -216,4 +216,200 @@ test('integrasi: anggaran < lot minimum -> NO TRADE di 4B DAN Bagian 3 (tidak ad
   assert.match(ord4(out), /Tidak Ada Setup/);
   assert.match(sec3(out), /Tidak ada level valid/);
   assert.deepEqual(auditZoneNumbers(out, { dec: 2, mult: 100, entryTol: 1.5 }), []);
+});
+
+// ======================= celah P0 #1: setup tanpa baris pasangan =======================
+const dropLine = (md, re) => md.split('\n').filter((l) => !re.test(l)).join('\n');
+
+test('P0-A: zona aktif di Bagian 3 tanpa baris 4B -> dibatalkan (tidak dilewati)', () => {
+  const md = dropLine(mk(), /^\| Buy Limit Zona 2/);
+  assert.ok(auditZoneNumbers(md, OPT).some((m) => m.field === 'pasangan'), 'audit harus menandai');
+  const r = reconcileZones(md, OPT);
+  assert.match(sec3(r.markdown), /Tidak ada level valid \(tunggu\)/);
+  assert.equal(r.cancelled.length, 1);
+  assert.match(r.markdown, /- Buy Limit Zona 2: tidak ada order/);
+  assert.doesNotMatch(r.markdown, /197\.30/);
+  assert.deepEqual(r.mismatches, []);
+});
+
+test('P0-A: order aktif di 4B tanpa baris Bagian 3 -> dibatalkan', () => {
+  const md = dropLine(mk(), /^\| BUY Zona 2/);
+  assert.ok(auditZoneNumbers(md, OPT).some((m) => m.field === 'pasangan'));
+  const r = reconcileZones(md, OPT);
+  assert.match(ord4(r.markdown), /Tidak Ada Setup \(Tunggu\)/);
+  assert.match(r.markdown, /- Buy Limit Zona 2: tidak ada order/);
+  assert.deepEqual(r.mismatches, []);
+  assert.notEqual(buildDecision({ markdown: r.markdown, bias: 'BULLISH' }).status, 'TRADE');
+});
+
+test('P0-A: baris tidak aktif tanpa pasangan dibiarkan (tidak ada yang dibatalkan palsu)', () => {
+  const md = dropLine(mk(), /^\| SELL Zona 2/);
+  const r = reconcileZones(dropLine(md, /^\| Sell Limit Zona 2/), OPT);
+  assert.deepEqual(r.cancelled, []);
+});
+
+// ======================= celah P0 #2: toleransi entry = 1 tick =======================
+test('P0-B: entry hanya boleh di dalam zona (toleransi 1 tick, bukan 0.1xATR)', () => {
+  const edgeIn = reconcileZones(mk({ e4: '3625.00' }), { dec: 2 });
+  assert.deepEqual(edgeIn.cancelled, []);
+  const oneTick = reconcileZones(mk({ e4: '3625.01' }), { dec: 2 });
+  assert.deepEqual(oneTick.cancelled, [], '1 tick di luar masih boleh (pembulatan)');
+  const far = reconcileZones(mk({ e4: '3626.50' }), { dec: 2 });
+  assert.equal(far.cancelled.length, 1, '1.5 di luar zona harus dibatalkan');
+  assert.match(far.cancelled[0].why, /di luar zona Bagian 3/);
+  const below = reconcileZones(mk({ e4: '3614.90' }), { dec: 2 });
+  assert.equal(below.cancelled.length, 1);
+});
+
+test('P0-B: opsi entryTol tidak lagi bisa memperluas zona (diabaikan)', () => {
+  const r = reconcileZones(mk({ e4: '3628.00' }), { dec: 2, entryTol: 50 });
+  assert.equal(r.cancelled.length, 1);
+  assert.ok(auditZoneNumbers(mk({ e4: '3628.00' }), { dec: 2, entryTol: 50 }).some((m) => m.field === 'entry'));
+  const src = fs.readFileSync(new URL('../app/api/analyze/route.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /entryTolSync/);
+});
+
+// ======================= sinkron teks bebas =======================
+const FREE = (extra = '') => `**BIAS UTAMA:** BULLISH - FOKUS BUY
+> **Ringkasan Cepat**
+> - 🎯 Rencana: pasang Buy Limit Zona 2 di 3623.00, SL 3600.00, TP1 3650.00, TP2 3700.00, R:R ~1:2.5, lot 0.50, risiko $250.00
+> - 📍 Level kunci: Support 3615-3625
+> - ⏰ Hindari trading: tidak ada
+${extra}${mk()}
+**Skenario Batal (Invalidation Level):**
+- Buy Zona 2: batal jika close H1 di bawah 3605.00.
+- Sell Zona 2: batal jika close H1 di atas 3700.00.
+
+**Manajemen Posisi:** Buy Zona 2: geser SL ke BE setelah TP1 3657.80 tercapai; ambil partial di 3670.00.
+`;
+const final = (md, opts = {}) => {
+  const r = reconcileZones(md, OPT);
+  return { r, n: syncNarrative(r.markdown, { dec: 2, stale: r.changes, ...opts }) };
+};
+
+test('teks bebas: Entry/SL/TP/R:R/lot/risiko di Ringkasan Cepat disamakan dengan tabel final', () => {
+  const { n } = final(FREE());
+  const line = n.markdown.split('\n').find((l) => /Rencana/.test(l));
+  assert.match(line, /Buy Limit Zona 2 di 3625\.00/);
+  assert.match(line, /SL 3605\.27/);
+  assert.match(line, /TP1 3657\.80/);
+  assert.match(line, /R:R ~1:1\.66/);
+  assert.match(line, /lot 0\.10/);
+  assert.match(line, /risiko \$197\.30/);
+  assert.doesNotMatch(line, /3600\.00|3650\.00|1:2\.5|0\.50|250\.00/);
+  assert.deepEqual(n.mismatches, []);
+});
+
+test('teks bebas: angka lama yang diganti server (SL 3605.00) di Skenario Batal ikut berubah', () => {
+  const { n } = final(FREE());
+  assert.match(n.markdown, /- Buy Zona 2: batal jika close H1 di bawah 3605\.27\./);
+  assert.doesNotMatch(n.markdown, /3605\.00/);
+});
+
+test('teks bebas: zona yang tidak punya setup (Sell Zona 2) -> WAIT / NO TRADE, bukan rekomendasi aktif', () => {
+  const { n } = final(FREE());
+  assert.match(n.markdown, /- WAIT \/ NO TRADE — Sell Zona 2: tidak ada order/);
+  assert.doesNotMatch(n.markdown, /batal jika close H1 di atas 3700/);
+});
+
+test('teks bebas: zona dibatalkan (entry di luar zona) -> semua referensi aktif jadi WAIT / NO TRADE', () => {
+  const { r, n } = final(FREE(), {});
+  void r;
+  const cancelled = reconcileZones(FREE().replace('| 3625.00 | 3605.27 |', '| 3650.00 | 3605.27 |'), OPT);
+  assert.equal(cancelled.cancelled.length, 1);
+  const nn = syncNarrative(cancelled.markdown, { dec: 2, stale: cancelled.changes });
+  const plan = nn.markdown.split('\n').find((l) => /Rencana/.test(l));
+  assert.match(plan, /WAIT \/ NO TRADE — Buy Zona 2/);
+  assert.doesNotMatch(plan, /3600\.00|3650\.00|TP1|lot 0\.50/);
+  assert.match(nn.markdown, /- WAIT \/ NO TRADE — Buy Zona 2: tidak ada order/);
+  const mp = nn.markdown.split('\n').find((l) => /Manajemen Posisi/.test(l));
+  assert.match(mp, /WAIT \/ NO TRADE — Buy Zona 2/);
+  assert.deepEqual(nn.mismatches, []);
+  assert.notEqual(buildDecision({ markdown: nn.markdown, bias: 'BULLISH' }).status, 'TRADE');
+});
+
+test('teks bebas: Manajemen Posisi TP1 mengikuti tabel final; tabel, blok verifikasi server & blok kode tidak disentuh', () => {
+  const extra = '> 🧮 **Verifikasi risiko otomatis** (XAUUSD) catatan:\n> - Buy Limit Zona 2: Lot diturunkan 0.50 -> 0.10, SL 3600.00\n\n```text\nBuy Zona 2 SL 3600.00 TP1 3650.00\n```\n';
+  const { n } = final(FREE(extra));
+  assert.match(n.markdown, /Buy Limit Zona 2: Lot diturunkan 0\.50 -> 0\.10, SL 3600\.00/); // riwayat koreksi server dipertahankan
+  assert.match(n.markdown, /Buy Zona 2 SL 3600\.00 TP1 3650\.00/); // blok kode lampiran
+  assert.match(n.markdown, /\| BUY Zona 2/);
+  const mp = n.markdown.split('\n').find((l) => /^\*\*Manajemen Posisi/.test(l));
+  assert.match(mp, /TP1 3657\.80/);
+});
+
+test('teks bebas: klausa dengan dua zona dan angka berlabel -> diganti rujukan tabel final (tidak menebak)', () => {
+  const md = FREE().replace('> - 📍 Level kunci', '> - 🎯 Eksekusi: Buy Zona 2 SL 3600.00 dan Sell Zona 2 SL 3700.00\n> - 📍 Level kunci');
+  const { n } = final(md);
+  assert.match(n.markdown, /Eksekusi: angka final tiap zona: lihat tabel Bagian 3 dan 4B/);
+  assert.deepEqual(n.mismatches, []);
+});
+
+test('teks bebas: idempoten & audit bersih; catatan "Sudah Terpasang" tidak dianggap setup mati', () => {
+  const { n } = final(FREE());
+  const again = syncNarrative(n.markdown, { dec: 2 });
+  assert.equal(again.markdown, n.markdown);
+  assert.deepEqual(auditNarrative(n.markdown, { dec: 2 }), []);
+  assert.deepEqual([...ledgerOf(n.markdown, { dec: 2 }).values()].filter((x) => x.active).map((x) => `${x.side}${x.zone}`), ['BUY2']);
+});
+
+test('teks bebas: angka final tidak pernah berbeda dari tabel (fuzz 200 kasus, termasuk zona dibatalkan)', () => {
+  let seed = 777;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+  const pick = (a) => a[Math.floor(rnd() * a.length)];
+  const f2 = (v) => v.toFixed(2);
+  let waits = 0, rewrites = 0;
+  for (let n = 0; n < 200; n++) {
+    const e = 3600 + rnd() * 50;
+    const sl = e - (6 + rnd() * 30);
+    const tp = e + (12 + rnd() * 70);
+    const badEntry = rnd() < 0.25;
+    const md = mk({
+      s3: pick([f2(sl), f2(sl - 0.27)]), t3: pick([f2(tp), f2(tp + 4)]),
+      e4: badEntry ? f2(e + 60) : f2(e), s4: f2(sl), tp4: f2(tp),
+      jar: f2(e - sl), lot: pick(['0.10', '0.03']), risk: `$${f2(0.1 * (e - sl) * 100)}`, rr: `1:${f2((tp - e) / (e - sl))}`,
+      det: `- Buy Limit Zona 2: 0.10 lot x ${f2(e - sl)} x 100 = $${f2(0.1 * (e - sl) * 100)}`,
+    }).replace('3615.00 - 3625.00', `${f2(e - 8)} - ${f2(e + 2)}`);
+    const free = `> - 🎯 Rencana: Buy Limit Zona 2 di ${f2(e - 1)}, SL ${f2(sl - 3)}, TP1 ${f2(tp + 9)}, R:R ~1:${f2(rnd() * 5 + 1)}, lot 0.${pick(['25', '50'])}, risiko $${f2(rnd() * 400)}\n${md}\n**Skenario Batal (Invalidation Level):**\n- Buy Zona 2: batal jika close di bawah ${f2(sl - 0.27)}\n- Sell Zona 2: batal jika close di atas ${f2(e + 80)}\n`;
+    const r = reconcileZones(free, OPT);
+    let out = r.mismatches.length ? cancelMismatched(r.markdown, r.mismatches).markdown : r.markdown;
+    const nn = syncNarrative(out, { dec: 2, stale: r.changes });
+    assert.deepEqual(nn.mismatches, [], `kasus ${n}\n${nn.markdown}`);
+    assert.deepEqual(auditZoneNumbers(nn.markdown, { dec: 2 }), []);
+    const led = ledgerOf(nn.markdown, { dec: 2 }).get('BUY2');
+    const plan = nn.markdown.split('\n').find((l) => /Rencana/.test(l));
+    if (led?.active) {
+      assert.match(plan, new RegExp(`SL ${led.sl.toFixed(2)}`));
+      assert.match(plan, new RegExp(`TP1 ${led.tp1.toFixed(2)}`));
+      assert.match(plan, new RegExp(`R:R ~1:${led.rr.toFixed(2)}`));
+      rewrites++;
+    } else {
+      assert.match(plan, /WAIT \/ NO TRADE/);
+      assert.doesNotMatch(plan, /TP1|SL \d/);
+      waits++;
+    }
+  }
+  assert.ok(waits > 10 && rewrites > 100, `variasi: wait=${waits} aktif=${rewrites}`);
+});
+
+test('integrasi: tahap 1 -> validator risiko -> tahap 2 -> teks bebas, lot turun tetap tercermin di teks bebas', () => {
+  const md = FREE().replace('Buy Limit Zona 2 di 3623.00', 'Buy Limit Zona 2 di 3623.00 (lot 0.10, risiko $197.30)');
+  const p1 = reconcileZones(md, { dec: 2 });
+  const c = verifyRiskTables(p1.markdown, 26, PAIRS.XAUUSD, new Date('2026-11-24T06:00:00Z'), { last: 3640, capPerDirection: true, zones: 3 });
+  const p2 = reconcileZones(c.markdown, { dec: 2, mult: c.mult });
+  const nn = syncNarrative(p2.markdown, { dec: 2, stale: [...p1.changes, ...p2.changes] });
+  const row = ord4(nn.markdown).split('|').map((x) => x.trim());
+  const lot = row[6], risk = row[7];
+  const plan = nn.markdown.split('\n').find((l) => /Rencana/.test(l));
+  assert.ok(Number(lot) < 0.10);
+  assert.ok(plan.includes(`lot ${lot}`), plan);
+  assert.ok(plan.includes(`risiko ${risk}`), plan);
+  assert.deepEqual(nn.mismatches, []);
+});
+
+test('route: teks bebas disinkronkan setelah audit/pembatalan tahap 2, dengan daftar perubahan angka lama', () => {
+  const src = fs.readFileSync(new URL('../app/api/analyze/route.js', import.meta.url), 'utf8');
+  assert.match(src, /import \{ reconcileZones, cancelMismatched, syncNarrative \}/);
+  assert.ok(src.indexOf('cancelMismatched(md') < src.indexOf('syncNarrative(md'));
+  assert.match(src, /stale: \[\.\.\.staleChanges, \.\.\.rc2\.changes\]/);
 });
