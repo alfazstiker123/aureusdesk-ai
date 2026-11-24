@@ -98,3 +98,6 @@ Akar masalah (audit PC 16.13 vs HP 16.14, snapshot sama): (1) saldo & Zona 1 ber
 - `app/api/analyze/route.js`: bias dihitung sekali (`biasInfo`) dari teks asli model + struktur mesin dan dipakai header, label arah, keputusan server, status 4B; respons membawa `audit`. `app/api/history/route.js`: simpan `audit_meta` (fallback aman bila kolom belum ada). `lib/mt4Market.js`: ikut membaca kolom `id` snapshot.
 - Tidak diubah: SMC engine, BOS/CHoCH, OB/FVG, koordinat zona, Entry/SL/TP, lot, rumus risiko, R:R, auto-trading (tidak ada).
 - Tes: 269/269 (249 lama + 20 baru). Belum diuji live; build production Vercel baru bisa diverifikasi setelah deploy.
+
+### Hotfix #10.1 — HTTP 400 "Tidak dapat membaca OHLC"
+Penyebab: Audit #10 menambah kolom `id` ke select tabel `mt4_market_snapshots`, padahal tabel itu tidak punya kolom `id` (hanya `trading_analyses`). Akibatnya PostgREST 400 dan semua analisa tanpa/dengan OHLC gagal. Perbaikan: `id` dihapus dari select; identitas snapshot di audit = kunci upsert `koneksi|simbol|TF`. Tes regresi: select snapshot tidak boleh memuat `id`. 271/271.

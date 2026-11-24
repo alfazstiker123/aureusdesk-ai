@@ -276,3 +276,11 @@ test('riwayat dapat ditelusuri: dua analisa 16.13 vs 16.14 — snapshot sama tet
   const d = configDiff(pc.config, hp.config).map((x) => x.key);
   assert.ok(d.includes('balance') && d.includes('zone1'));
 });
+
+test('snapshot MT4 tanpa kolom id: identitas = kunci upsert koneksi|simbol|TF (kolom id TIDAK boleh diminta ke tabel snapshot)', () => {
+  const m = snapshotMeta({ timeframe: 'H1', connection_id: '90539d85', symbol: 'XAUUSD', bars: BARS, received_at: 'x' }, 'MT4_EA');
+  assert.equal(m.id, '90539d85|XAUUSD|H1');
+  const cols = /const COLS = "([^"]+)"/.exec(fs.readFileSync(new URL('../lib/mt4Market.js', import.meta.url), 'utf8'))[1].split(',');
+  assert.ok(!cols.includes('id')); // regresi: select id → HTTP 400 "Tidak dapat membaca OHLC"
+  assert.ok(cols.includes('connection_id') && cols.includes('bars') && cols.includes('received_at'));
+});
