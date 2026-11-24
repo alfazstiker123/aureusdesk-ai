@@ -96,7 +96,7 @@ void SetStatus(int i, string s)
 void ShowStatus()
 {
    if(!ShowStatusOnChart) return;
-   string t = "AureusDesk Bridge v3.1 | " + g_sym + " | UTC offset server " + IntegerToString(g_offsetUsed / 3600) + "j (" + g_offsetMode + ")\n";
+   string t = "AureusDesk Universal Bridge v3.2 | " + g_sym + " | UTC offset server " + IntegerToString(g_offsetUsed / 3600) + "j (" + g_offsetMode + ")\n";
    bool anyOk = false, anyEnabled = false;
    // Diagnostik spesifikasi: cocokkan dengan Specification simbol di MT4 (klik kanan Market Watch > Specification)
    {
