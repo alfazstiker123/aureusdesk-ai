@@ -24,6 +24,8 @@ import { metalsWeekendClosed, fmtMt4 } from '@/lib/marketTime';
 import { buildSmcReport, buildZoneCandidates, buildZoneCandidates3 } from '@/lib/smc/engine';
 import { enforceSmcZones, syncTargets, disableZoneRows } from '@/lib/smc/guard';
 import { auditZoneLabels, ZONE_LABELS_VERSION } from '@/lib/zoneLabels';
+import { syncSummaryPlan } from '@/lib/summaryPlan';
+import { flagStaleStructure } from '@/lib/staleStructure';
 import { reconcileZones, cancelMismatched, syncNarrative, deadKeys, pruneNotes, finalizeOrders } from '@/lib/finalSync';
 import { normalizeIdNumbers } from '@/lib/numFormat';
 import { fixWeekendExpiry, nextOpenMs } from '@/lib/weekendExpiry';
@@ -852,6 +854,7 @@ export async function POST(req) {
     // Keputusan server (dari tabel final + skor mesin): TRADE / COUNTERTREND_ONLY / NO_TRADE; data kurang = INSUFFICIENT_DATA (bukan "tidak ada peluang")
     let decision = null;
     let htfNote = '';
+    let consistencyNotes = []; // Audit #13: Rencana Ringkasan & penanda struktur basi
     if (markdown) {
       try {
         const gap = dataGap({ hasSnapshots: !!mt4ContextUsed?.snapshots?.length, analyses: mt4ContextUsed?.smc?.analyses, priceMismatch: mt4Status === 'PRICE_MISMATCH' });
@@ -872,6 +875,13 @@ export async function POST(req) {
           const fo = finalizeOrders(markdown, { status: decision.status, dir: rb0Dir(biasInfo), maxRiskUsd: riskUsd, dec: pairCfg.dec, candidates: checked?.candidates || [] });
           markdown = fo.markdown;
           markdown = syncOrderLabels(markdown, biasInfo.final).markdown; // label Searah Bias / Counter-Trend di 4B mengikuti bias final server
+          // Audit #13: Rencana di Ringkasan Cepat mengikuti status keputusan server; zona INVALIDATED/MITIGATED tidak disajikan sebagai fresh
+          try {
+            const sp = syncSummaryPlan(markdown, { status: decision.status, bias: biasInfo.final });
+            markdown = sp.markdown; consistencyNotes.push(...sp.notes);
+            const fs2 = flagStaleStructure(markdown, mt4ContextUsed?.smc?.analyses || []);
+            markdown = fs2.markdown; consistencyNotes.push(...fs2.notes);
+          } catch (e3) { console.error('[analyze] consistency step error:', e3); }
         }
         markdown = insertDecision(markdown, decision.text);
         // Transparansi risiko (order ditolak karena batas) + panel Bias 3 lapis; keduanya membaca hasil validator, tidak mengubah angka
@@ -890,6 +900,7 @@ export async function POST(req) {
     const notices = [];
     if (aiDown) notices.push(`⚠️ NARASI AI TIDAK TERSEDIA — TABEL MESIN TETAP DITAMPILKAN. (${aiDown}) Ini bukan konfirmasi bahwa setup sudah aktif; ikuti Keputusan Server dan tunggu konfirmasi candle.`);
     if (htfNote) notices.push(htfNote);
+    for (const n of consistencyNotes) notices.push(n);
     { const qt = mt4ContextUsed?.quote; if (qt) notices.push(`💱 Harga acuan zona: Bid ${qt.bid}${qt.ask ? ` / Ask ${qt.ask} (spread ${Number(qt.spread.toFixed(5))})` : ''}${qt.atWib ? `, kuotasi EA ${qt.atWib} WIB` : ''}. Struktur SMC dari candle tertutup (close ${qt.closeTf} ${qt.closeRef}).`); }
     if ((mt4Status === 'OHLC_HYBRID' || mt4Status === 'OHLC_ONLY') && mt4Report?.analyses?.length) {
       notices.push(`${mt4Status === 'OHLC_ONLY' ? '📡 OHLC ONLY (tanpa screenshot) aktif' : '📡 Data Hybrid aktif'}: OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'Cloud' : 'MT4 EA'} diterima dan lolos pemeriksaan. SMC dihitung deterministik dari candle tertutup; bukan probabilitas profit.`);
