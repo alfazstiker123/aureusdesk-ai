@@ -10,6 +10,7 @@ import { verifyRiskTables, fixDailyClose } from '@/lib/riskCheck';
 import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
 import { syncInvalidation, labelConfirmationLevels } from '@/lib/invalidation';
 import { spreadInfo, spreadWarnings } from '@/lib/spreadCheck';
+import { zoneOverlap } from '@/lib/overlap';
 import { buildDecision, insertDecision, insufficientDecision, dataGap } from '@/lib/decision';
 import { resolveBias, isNeutralHeadline, syncHeadlineBias, syncBiasLabels, syncTfBias, syncLevelLabels, syncSummaryLevels, syncExpiry } from '@/lib/consistency';
 import { getConnectionSnapshots, marketContext, mt4SymbolForPair, snapshotSpreadMinutes } from '@/lib/mt4Market';
@@ -704,7 +705,9 @@ export async function POST(req) {
         md = lab.markdown;
         const sp = spreadWarnings(md, { quote: mt4ContextUsed?.quote || null, dec: pairCfg.dec });
         md = sp.markdown;
-        smcNotes = [...smcNotes, ...inv.notes, ...lab.notes, ...sp.notes];
+        const ov = zoneOverlap(md, { analyses: smcAnalyses, dec: pairCfg.dec });
+        md = ov.markdown;
+        smcNotes = [...smcNotes, ...inv.notes, ...lab.notes, ...sp.notes, ...ov.notes];
       }
       // Catatan lama yang menyebut zona yang akhirnya batal (mis. "entry 3545.95 berjarak ...") dibuang agar tidak ada angka usang
       const dead = pairCfg ? deadKeys(md, { dec: pairCfg.dec }) : [];
@@ -806,7 +809,7 @@ export async function POST(req) {
         }
         // Status tiap order 4B (CANDIDATE / VALIDATED) + Aturan Pasang & total risiko dari tabel final, sesuai keputusan server
         if (pairCfg) {
-          const fo = finalizeOrders(markdown, { status: decision.status, dir: rb0Dir(markdown, mt4ContextUsed), maxRiskUsd: riskUsd, dec: pairCfg.dec });
+          const fo = finalizeOrders(markdown, { status: decision.status, dir: rb0Dir(markdown, mt4ContextUsed), maxRiskUsd: riskUsd, dec: pairCfg.dec, candidates: checked?.candidates || [] });
           markdown = fo.markdown;
         }
         markdown = insertDecision(markdown, decision.text);

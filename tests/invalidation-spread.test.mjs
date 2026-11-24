@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { reconcileZones, cancelMismatched, syncNarrative, finalizeOrders, ledgerOf } from '../lib/finalSync.js';
 import { syncInvalidation, labelConfirmationLevels, judgeClause, structuralLevels, UNDEFINED_TEXT } from '../lib/invalidation.js';
 import { spreadInfo, spreadWarnings, assessZone, TAG, UNVERIFIED, SPREAD_ZONE_WARN_RATIO } from '../lib/spreadCheck.js';
+import { zoneOverlap } from '../lib/overlap.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'inv-'));
 for (const f of ['riskCheck.js', 'brokerSpec.js', 'pairs.js', 'marketTime.js', 'zoneCheck.js']) {
@@ -83,8 +84,9 @@ function pipeline(md, { status = 'WAIT', dir = null, quote = QUOTE, analyses = A
   const inv = syncInvalidation(nr.markdown, { analyses, dec: DEC });
   const lab = labelConfirmationLevels(inv.markdown, { dec: DEC, items: inv.items });
   const sp = spreadWarnings(lab.markdown, { quote, dec: DEC });
-  const fo = finalizeOrders(sp.markdown, { status, dir, maxRiskUsd: riskUsd, dec: DEC });
-  return { inv, lab, sp, fo, md: fo.markdown, notes: [...inv.notes, ...lab.notes, ...sp.notes] };
+  const ov = zoneOverlap(sp.markdown, { analyses, dec: DEC });
+  const fo = finalizeOrders(ov.markdown, { status, dir, maxRiskUsd: riskUsd, dec: DEC, candidates: c.candidates });
+  return { inv, lab, sp, ov, c, fo, md: fo.markdown, notes: [...inv.notes, ...lab.notes, ...sp.notes, ...ov.notes] };
 }
 const line = (md, re) => md.split('\n').find((l) => re.test(l));
 const scen = (md) => { const a = md.split('\n'); const i = a.findIndex((l) => /Skenario Batal/.test(l)); const out = []; for (let k = i + 1; k < a.length && (/^\s*$/.test(a[k]) || /^\s*[-*•]/.test(a[k])); k++) if (a[k].trim()) out.push(a[k]); return out; };
@@ -317,7 +319,7 @@ test('P1 WAIT & SEE: tidak ada kalimat yang menyuruh memasang pending order; ACT
   assert.match(banner, /ACTIVE SETUP/);
   assert.doesNotMatch(banner, /boleh dipasang setelah/);
   assert.doesNotMatch(r.md, /✅ Pasang hanya order/);
-  const advice = r.md.split('\n').filter((l) => !/^\s*[|>]/.test(l) && /\b(pasang|memasang)\b/i.test(l) && !/jangan|belum boleh|dihapus server|candidate|kandidat/i.test(l));
+  const advice = r.md.split('\n').filter((l) => !/^\s*[|>]/.test(l) && /\b(pasang|memasang)\b/i.test(l) && !/jangan|belum boleh|dihapus server|candidate|kandidat/i.test(l) && !/^\*\*Aturan Pasang \(/.test(l));
   assert.deepEqual(advice, []);
   assert.doesNotMatch(r.md, /ACTIVE SETUP\*\*|status ACTIVE SETUP:/);
 });
@@ -352,7 +354,7 @@ test('P1 judul, banner, status baris, Ringkasan Cepat, dan Aturan Pasang konsist
 
 test('P1 judul 4B idempoten dan tidak merusak banner tunggal', () => {
   const r = pipeline(RAW, { status: 'WAIT' });
-  const again = finalizeOrders(r.md, { status: 'WAIT', dir: null, maxRiskUsd: 26, dec: DEC });
+  const again = finalizeOrders(r.md, { status: 'WAIT', dir: null, maxRiskUsd: 26, dec: DEC, candidates: r.c.candidates });
   assert.equal(again.markdown, r.md);
   assert.equal((r.md.match(/Status order 4B/g) || []).length, 1);
 });
@@ -528,4 +530,242 @@ test('HOTFIX: BUY dan SELL diproses sekaligus; zona aktif tanpa baris tidak mena
   assert.deepEqual(names, ['Buy Zona 1', 'Sell Zona 2']);
   assert.equal(r.inv.items.filter((x) => x.added).length, 0);
   assert.ok(r.inv.items.every((x) => x.undefinedInvalidation));
+});
+
+// ================= AUDIT FINAL: total risiko 3 kategori, invalidation lintas zona, overlap OB/FVG =================
+// Fixture direkonstruksi dari angka audit live pasca c5ea4e8 (laporan mentah tidak ikut terlampir): BUY Z1 SL 3605.50 ($5.33), BUY Z3 SL 3527.11 ($16.45),
+// SELL Z2 SL 3662.61 ($19.89); kandidat awal SELL Z3 ($17.69) dan BUY Z2 ($26.20) ditolak validator; total lama $37.58 / $47.98 ada di teks bebas Gemini.
+const ANALYSES2 = [
+  ...ANALYSES.map((a) => (a.timeframe === 'H1' ? { ...a, fvgs: [...a.fvgs, { type: 'BULLISH', low: 3529.96, high: 3557.16, status: 'FRESH' }, { type: 'BULLISH', low: 3538.39, high: 3568.22, status: 'FRESH' }] } : a)),
+  { timeframe: 'H4', status: 'OK', supports: [{ price: 3502.82 }], resistances: [{ price: 3689.62 }], structureEvents: [], orderBlocks: [], fvgs: [{ type: 'BULLISH', low: 3542.22, high: 3575.28, status: 'FRESH' }] },
+];
+const LIVE4 = `**BIAS UTAMA:** NETRAL - WAIT & SEE
+**PAIR:** XAUUSD
+**HARGA TERAKHIR:** 3617.80
+
+> **Ringkasan Cepat**
+> - Rencana: Tunggu pullback ke zona struktur; jangan kejar harga di tengah range.
+
+### 3. Pemetaan Setup Eksekusi Langsung (Confirmation Entry)
+
+| Zona & Strategi | Zona Entry | Stop Loss (SL) | Take Profit 1 (TP1) | Take Profit 2 (TP2) | Syarat Konfirmasi Candlestick |
+|---|---|---|---|---|---|
+| BUY Zona 1 - Scalping (M15 FVG Demand) (Netral - Tunggu Konfirmasi) | 3608.25 - 3610.83 | 3605.50 | 3619.00 | 3631.87 | Bullish engulfing M5. R:R TP1 ±1:1.53. - Dasar: M15 FVG |
+| BUY Zona 2 - Intraday (Demand H1) (Netral - Tunggu Konfirmasi) | 3550.00 - 3553.31 | 3527.11 | 3600.00 | 3631.87 | Close M15 bullish. R:R TP1 ±1:1.80. - Dasar: H1 FVG |
+| BUY Zona 3 - Swing (H4/H1 FVG Demand) (Netral - Tunggu Konfirmasi) | 3529.96 - 3543.56 | 3527.11 | 3578.00 | 3611.46 | Konfirmasi H4 close bullish. R:R TP1 ±1:2.09. - Dasar: H4 FVG, H1 FVG |
+| SELL Zona 1 - Scalping (M5-M15 Supply) (Netral - Tunggu Konfirmasi) | Tidak ada level valid (tunggu) | - | - | - | - |
+| SELL Zona 2 - Intraday (M15 FVG/OB) (Netral - Tunggu Konfirmasi) | 3642.72 - 3646.46 | 3662.61 | 3612.73 | 3600.40 | Bearish rejection M15. R:R TP1 ±1:1.51. - Dasar: M15 FVG, H1 FVG |
+| SELL Zona 3 - Swing (H1 OB/H4 FVG) (Netral - Tunggu Konfirmasi) | 3710.52 - 3721.63 | 3728.21 | 3675.00 | 3640.00 | Close H1 bearish. R:R TP1 ±1:2.01. |
+
+### 4. Rekomendasi Susunan Pending Order
+
+**4B. Order Baru yang Disarankan**
+
+| Order | Harga Entry | Stop Loss | Take Profit | Jarak SL | Lot Aman | Risiko ($) | R:R | Waktu Berakhir (WIB) |
+|---|---|---|---|---|---|---|---|---|
+| Sell Limit Zona 1 (Scalping Supply) | Tidak Ada Setup (Tunggu) | - | - | - | - | - | - | - |
+| Sell Limit Zona 2 (Intraday FVG/OB M15) | 3642.72 | 3662.61 | 3612.73 | 19.89 | 0.01 | $19.89 | 1:1.51 | 24 Nov 2026, 19.09 WIB |
+| Sell Limit Zona 3 (Swing H1 OB/H4 FVG) | 3710.52 | 3728.21 | 3675.00 | 17.69 | 0.01 | $17.69 | 1:2.01 | 25 Nov 2026, 05.00 WIB |
+| Buy Limit Zona 1 (Scalping M15 FVG) | 3610.83 | 3605.50 | 3619.00 | 5.33 | 0.01 | $5.33 | 1:1.53 | 24 Nov 2026, 17.09 WIB |
+| Buy Limit Zona 2 (Intraday Demand H1) | 3553.31 | 3527.11 | 3600.00 | 26.20 | 0.01 | $26.20 | 1:1.80 | 24 Nov 2026, 19.09 WIB |
+| Buy Limit Zona 3 (Swing H4/H1 FVG) | 3543.56 | 3527.11 | 3578.00 | 16.45 | 0.01 | $16.45 | 1:2.09 | 25 Nov 2026, 05.00 WIB |
+
+**Rincian Hitung Risiko**
+
+- Sell Limit Zona 2: 0.01 lot x 19.89 x 100 = $19.89
+- Sell Limit Zona 3: 0.01 lot x 17.69 x 100 = $17.69
+- Buy Limit Zona 1: 0.01 lot x 5.33 x 100 = $5.33
+- Buy Limit Zona 2: 0.01 lot x 26.20 x 100 = $26.20
+- Buy Limit Zona 3: 0.01 lot x 16.45 x 100 = $16.45
+- Total risiko SELL Zona 2 + Zona 3 = $37.58 (melebihi batas $26).
+- Total risiko BUY Zona 1 + Zona 2 + Zona 3 = $47.98 (melebihi batas $26).
+- Kombinasi BUY Zona 1 + Zona 3 = $21.78.
+- Total risiko BUY yang lolos validator = $21.78.
+- Total risiko SELL yang lolos validator = $19.89.
+
+**Skenario Batal (Invalidation Level)**
+
+- Sell Zona 2 batal jika H1 close di atas 3662.61, atau M15 close di atas 3646.46 setelah sweep.
+- Buy Zona 1 batal jika M15 close di bawah 3605.50.
+- Buy Zona 2 dan Buy Zona 3 batal bila candle H1/H4 close di bawah 3527.11.
+- Semua order batal bila struktur H1 berubah arah.
+- Hapus pending jika TP1 tersentuh sebelum order terisi.
+
+**Manajemen Posisi**
+
+- Ambil partial 50% di TP1, lalu pindahkan SL ke break-even setelah profit ±1R.
+`;
+const Q4 = { bid: 3617.80, ask: 3618.16 };
+const pipe4 = (o = {}) => pipeline(LIVE4, { quote: Q4, analyses: ANALYSES2, ...o });
+const sec = (md, re) => { const a = md.split('\n'); const i = a.findIndex((l) => re.test(l)); const o = []; for (let k = i + 1; k < a.length && !/^\s*\*\*\S/.test(a[k]) && !/^\s*#/.test(a[k]); k++) o.push(a[k]); return o.join('\n'); };
+
+test('AUDIT P0 total risiko: kasus live tanpa $37.58 / $47.98 / kombinasi lama; total akhir BUY $21.78, SELL $19.89 (batas $26)', () => {
+  const r = pipe4();
+  assert.deepEqual([r.fo.totals.BUY.toFixed(2), r.fo.totals.SELL.toFixed(2)], ['21.78', '19.89']);
+  assert.doesNotMatch(r.md, /37\.58|47\.98|Kombinasi BUY Zona 1 \+ Zona 3|yang lolos validator = \$/);
+  assert.match(r.md, /- BUY: Buy Z1 \+ Buy Z3 = \$21\.78 \(di bawah batas \$26\.00 per arah\) — CANDIDATE, belum boleh dipasang\./);
+  assert.match(r.md, /- SELL: Sell Z2 = \$19\.89 \(di bawah batas \$26\.00 per arah\) — CANDIDATE, belum boleh dipasang\./);
+});
+
+test('AUDIT P0 total risiko: tiga kategori terpisah (kandidat awal / ditolak + alasan / lolos validator)', () => {
+  const r = pipe4();
+  const md = r.md;
+  const iCand = md.indexOf('- Kandidat awal sebelum validator');
+  const iRej = md.indexOf('- Dibatalkan validator (tidak dihitung)');
+  const iPass = md.indexOf('- Lolos validator (total akhir');
+  assert.ok(iCand > 0 && iRej > iCand && iPass > iRej, `${iCand} ${iRej} ${iPass}`);
+  const cand = line(md, /^- Kandidat awal sebelum validator/);
+  assert.match(cand, /BUKAN total dan bukan order aktif/);
+  assert.match(cand, /Sell Z3 \$17\.69/);
+  assert.match(cand, /Buy Z2 \$26\.20/);
+  const rej = line(md, /^- Dibatalkan validator/);
+  assert.match(rej, /Sell Z3 \(.+\)/);
+  assert.match(rej, /Buy Z2 \(.+\)/);
+  assert.doesNotMatch(rej, /Buy Z1|Buy Z3|Sell Z2/);
+  assert.match(line(md, /^- Lolos validator \(total akhir; batas \$26\.00 per arah; semuanya hanya CANDIDATE\)/), /CANDIDATE/);
+});
+
+test('AUDIT P0 total risiko: kandidat ditolak (Sell Z3, Buy Z2) tidak disebut sebagai order aktif / total; satu baris total per arah', () => {
+  const r = pipe4();
+  const totalsLines = r.md.split('\n').filter((l) => /Total risiko per arah/.test(l));
+  assert.ok(totalsLines.length >= 1);
+  for (const l of totalsLines) assert.match(l, /BUY \$21\.78 \| SELL \$19\.89/);
+  assert.equal(r.md.split('\n').filter((l) => /^- Total risiko per arah \(dihitung ulang/.test(l)).length, 1);
+  const detail = sec(r.md, /Rincian Hitung Risiko/);
+  assert.match(detail, /Sell Limit Zona 3: tidak ada order/);
+  assert.match(detail, /Buy Limit Zona 2: tidak ada order/);
+  assert.doesNotMatch(detail, /\$17\.69|\$26\.20/);
+});
+
+test('AUDIT P0 total risiko: Bagian 3, 4B, Rincian, ringkasan, dan catatan verifikasi memakai angka yang sama; tabel tidak berubah', () => {
+  const r = pipe4();
+  const led = ledgerOf(r.md, { dec: DEC });
+  assert.equal(led.get('BUY1').risk, 5.33);
+  assert.equal(led.get('BUY3').risk, 16.45);
+  assert.equal(led.get('SELL2').risk, 19.89);
+  assert.equal(led.get('BUY2').active, false);
+  assert.equal(led.get('SELL3').active, false);
+  assert.match(sec(r.md, /Rincian Hitung Risiko/), /Buy Limit Zona 3: 0\.01 lot x 16\.45 x 100 = \$16\.45/);
+  assert.match(r.md, /BUY \$21\.78 \| SELL \$19\.89 \(batas \$26\.00 per arah\)/);
+});
+
+test('AUDIT P0 WAIT & SEE: tidak ada instruksi pasang / kata "posisi aktif" dan KANDIDAT ORDER tetap', () => {
+  const r = pipe4();
+  assert.match(r.md, /^\*\*4B\. KANDIDAT ORDER — BELUM BOLEH DIPASANG\*\*$/m);
+  const advice = r.md.split('\n').filter((l) => !/^\s*[|>]/.test(l) && /\b(pasang|memasang)\b/i.test(l) && !/jangan|belum boleh|dihapus server|candidate|kandidat/i.test(l) && !/^\*\*Aturan Pasang \(/.test(l));
+  assert.deepEqual(advice, []);
+  assert.doesNotMatch(r.md, /order aktif yang lolos|posisi aktif/);
+});
+
+test('AUDIT P0 total risiko: status TRADE tidak menghapus rencana Gemini dan tetap memakai total final', () => {
+  const r = pipe4({ status: 'TRADE', dir: 'BUY' });
+  assert.match(r.md, /- BUY: Buy Z1 \+ Buy Z3 = \$21\.78 \(di bawah batas \$26\.00 per arah\)\./);
+  assert.doesNotMatch(r.md, /37\.58|47\.98/);
+});
+
+test('AUDIT P0 SELL sisi lain: tanpa blok risiko dari Gemini pun ringkasan 3 kategori disisipkan dan idempoten', () => {
+  const r = pipe4();
+  const again = finalizeOrders(r.md, { status: 'WAIT', dir: null, maxRiskUsd: 26, dec: DEC, candidates: r.c.candidates });
+  assert.equal(again.markdown, r.md);
+  assert.equal((r.md.match(/^\*\*Aturan Pasang \(/gm) || []).length, 1);
+});
+
+test('AUDIT P0 invalidation lintas zona: "Buy Zona 2 dan Buy Zona 3 batal bila … 3527.11" dipecah; Buy Z2 -> WAIT / NO TRADE; Buy Z3 SL bukan invalidation', () => {
+  const r = pipe4();
+  const sc = scen(r.md).join('\n');
+  assert.doesNotMatch(sc, /Buy Zona 2 dan Buy Zona 3/);
+  assert.match(line(r.md, /^- WAIT \/ NO TRADE — Buy Zona 2:/), /tidak ada order/);
+  const b3 = line(r.md, /^- Buy Zona 3:/);
+  assert.ok(b3, sc);
+  assert.match(b3, /SL 3527\.11 = batas risiko posisi/);
+  assert.ok(b3.includes(UNDEFINED_TEXT));
+  assert.doesNotMatch(b3, /close di bawah 3527\.11/);
+  // satu baris = satu sisi + satu nomor zona
+  for (const l of scen(r.md)) assert.ok(([...l.matchAll(/\b(?:buy|sell)(?:\s+limit)?\s+zona\s*\d/gi)].length) <= 1, l);
+});
+
+test('AUDIT P0 invalidation: kalimat umum "Semua order batal bila struktur H1 berubah arah" dihapus; aturan "Hapus pending" tetap', () => {
+  const r = pipe4();
+  assert.doesNotMatch(r.md, /Semua order batal bila struktur H1 berubah arah/);
+  assert.ok(r.md.includes('- Hapus pending jika TP1 tersentuh sebelum order terisi.'));
+  assert.ok(r.inv.notes.some((n) => /kalimat umum tanpa sisi\/nomor zona dihapus/.test(n)));
+});
+
+test('AUDIT P0 invalidation: SL tidak pernah jadi invalidation (Buy Z1 3605.50, Sell Z2 3662.61, Buy Z3 3527.11) dan tidak ada level karangan', () => {
+  const r = pipe4();
+  for (const [name, sl] of [['Buy Zona 1', '3605.50'], ['Sell Zona 2', '3662.61'], ['Buy Zona 3', '3527.11']]) {
+    const l = line(r.md, new RegExp(`^- ${name}:`));
+    assert.ok(l, name);
+    assert.match(l, new RegExp(`SL ${sl} = batas risiko posisi`));
+    assert.ok(l.includes(UNDEFINED_TEXT), l);
+  }
+});
+
+test('AUDIT P0 invalidation: lintas zona Sell (Sell Zona 2 & Sell Zona 3) dan idempotensi', () => {
+  const md = LIVE4.replace('- Buy Zona 2 dan Buy Zona 3 batal bila candle H1/H4 close di bawah 3527.11.', '- Sell Zona 2 dan Sell Zona 3 batal bila H1 close di atas 3678.03.');
+  const r = pipeline(md, { quote: Q4, analyses: ANALYSES2 });
+  assert.match(line(r.md, /^- Sell Zona 2:/), /SL 3662\.61/);
+  assert.match(line(r.md, /^- WAIT \/ NO TRADE — Sell Zona 3:/), /tidak ada order/);
+  const i2 = syncInvalidation(r.md, { analyses: ANALYSES2, dec: DEC });
+  assert.equal(i2.markdown, r.md);
+});
+
+// ---- overlap OB/FVG
+test('AUDIT P1 overlap: BUY Zona 3 (3529.96–3543.56) — H1 FVG mencakup seluruh zona, H4 FVG hanya 10% (3542.22–3543.56)', () => {
+  const r = pipe4();
+  const it = r.ov.items.find((x) => x.key === 'BUY3');
+  assert.ok(it && it.multi);
+  const h1 = it.labels.find((x) => x.label === 'H1 FVG'), h4 = it.labels.find((x) => x.label === 'H4 FVG');
+  assert.ok(h1.cover > 0.999);
+  assert.ok(Math.abs(h4.cover - 1.34 / 13.6) < 1e-6);
+  assert.ok(Math.abs(it.common[0][0] - 3542.22) < 1e-9 && Math.abs(it.common[0][1] - 3543.56) < 1e-9);
+  assert.ok(Math.abs(it.commonRatio - 1.34 / 13.6) < 1e-6);
+  const note = r.ov.notes.find((n) => n.includes('BUY Zona 3'));
+  assert.match(note, /H1 FVG mencakup seluruh zona; H4 FVG hanya 10% zona \(3542\.22–3543\.56\)/);
+  assert.match(note, /bukan seluruh zona/);
+  assert.match(note, /Irisan penuh antar dasar \(tanpa batas zona\): 3542\.22–3568\.22/);
+  assert.match(note, /Koordinat zona tidak diubah/);
+});
+
+test('AUDIT P1 overlap: label konfluensi ditandai parsial; seluruh BUY Zona 3 tidak diklaim overlap H1/H4', () => {
+  const r = pipe4();
+  const row = line(r.md, /^\| BUY Zona 3/);
+  assert.match(row, /🧩 KONFLUENSI PARSIAL \(irisan H1∩H4 hanya 10% zona\)/);
+  assert.match(row, /Dasar: H4 FVG \(hanya 10% zona: 3542\.22–3543\.56\), H1 FVG\b(?! \(hanya)/);
+  assert.doesNotMatch(row, /overlap H1\/H4 penuh|seluruh zona beririsan/);
+});
+
+test('AUDIT P1 overlap: zona satu TF (BUY Zona 1) tidak diberi tanda; Entry/SL/TP/lot/R:R/koordinat zona tidak berubah', () => {
+  const r = pipe4();
+  assert.doesNotMatch(line(r.md, /^\| BUY Zona 1/), /KONFLUENSI PARSIAL/);
+  const base = pipe4({ analyses: ANALYSES });
+  const grab = (md) => md.split('\n').filter((l) => /^\| (?:BUY|SELL|Buy|Sell)/.test(l)).map((l) => l.split('|').slice(2, 9).map((x) => x.trim().replace(/\s*⚠️ ZONA SEMPIT[^|]*$/, '').replace(/ \(hanya [^)]*\)/g, '')).join('|'));
+  assert.deepEqual(grab(r.md), grab(base.md));
+  const led = ledgerOf(r.md, { dec: DEC });
+  assert.deepEqual([led.get('BUY3').lo, led.get('BUY3').hi, led.get('BUY3').entry, led.get('BUY3').sl, led.get('BUY3').tp1], [3529.96, 3543.56, 3543.56, 3527.11, 3578]);
+});
+
+test('AUDIT P1 overlap: SELL — M15 OB hanya sebagian zona diberi keterangan; tanpa data mesin tidak ada perubahan; idempoten', () => {
+  const md = LIVE4.replace('Dasar: M15 FVG, H1 FVG |', 'Dasar: M15 FVG, M15 OB, H1 FVG |');
+  const r = pipeline(md, { quote: Q4, analyses: ANALYSES2 });
+  const row = line(r.md, /^\| SELL Zona 2/);
+  assert.match(row, /M15 OB \(hanya 37% zona: 3645\.07–3646\.46\)/);
+  assert.match(row, /KONFLUENSI PARSIAL \(irisan M15∩H1 hanya 37% zona\)/);
+  assert.equal(zoneOverlap(r.md, { analyses: null, dec: DEC }).markdown, r.md);
+  const again = zoneOverlap(r.md, { analyses: ANALYSES2, dec: DEC });
+  assert.equal(again.markdown, r.md);
+});
+
+test('AUDIT P1 overlap: dasar tanpa irisan (hanya menyentuh tepi) diberi keterangan, bukan dihitung konfluensi', () => {
+  const md = LIVE4.replace('Dasar: M15 FVG |', 'Dasar: M15 FVG, M5 OB |');
+  const an = ANALYSES2.map((a) => (a.timeframe === 'M5' ? { ...a, orderBlocks: [{ type: 'BULLISH', low: 3610.83, high: 3615.0, status: 'FRESH' }] } : a));
+  const r = pipeline(md, { quote: Q4, analyses: an });
+  assert.match(line(r.md, /^\| BUY Zona 1/), /M5 OB \(hanya menyentuh tepi zona, tanpa irisan\)/);
+});
+
+test('route: overlap & kandidat risiko terpasang di route', () => {
+  const src = fs.readFileSync(new URL('../app/api/analyze/route.js', import.meta.url), 'utf8');
+  assert.match(src, /import \{ zoneOverlap \} from '@\/lib\/overlap'/);
+  assert.match(src, /zoneOverlap\(md, \{ analyses: smcAnalyses/);
+  assert.match(src, /candidates: checked\?\.candidates \|\| \[\]/);
 });
