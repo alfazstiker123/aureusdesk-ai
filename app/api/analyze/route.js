@@ -9,8 +9,8 @@ import { buildFundamentalBlock } from '@/lib/calendar';
 import { verifyRiskTables, fixDailyClose } from '@/lib/riskCheck';
 import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
 import { buildDecision, insertDecision, insufficientDecision, dataGap } from '@/lib/decision';
-import { resolveBias, syncHeadlineBias, syncBiasLabels, syncTfBias, syncLevelLabels, syncSummaryLevels, syncExpiry } from '@/lib/consistency';
-import { getConnectionSnapshots, marketContext, mt4SymbolForPair } from '@/lib/mt4Market';
+import { resolveBias, isNeutralHeadline, syncHeadlineBias, syncBiasLabels, syncTfBias, syncLevelLabels, syncSummaryLevels, syncExpiry } from '@/lib/consistency';
+import { getConnectionSnapshots, marketContext, mt4SymbolForPair, snapshotSpreadMinutes } from '@/lib/mt4Market';
 import { specPromptBlock, specNotice } from '@/lib/brokerSpec';
 import { getCloudMarketSnapshots, cloudMarketContext, cloudProxyOf, applyBasis } from '@/lib/cloudMarket';
 import { metalsWeekendClosed, fmtMt4 } from '@/lib/marketTime';
@@ -59,7 +59,8 @@ async function loadMt4Context(pairId, zones = 2, opts = {}) {
     const brokerSpec = conn.chosen.spec && conn.chosen.spec.valid ? conn.chosen.spec : null;
     const specWhy = brokerSpec ? null : conn.chosen.spec ? `spesifikasi tidak lengkap: ${[...(conn.chosen.spec.missing || []), ...(conn.chosen.spec.problems || [])].join(', ') || 'tidak valid'}` : conn.chosen.connectionId === 'legacy' ? 'EA lama (v3.1) tidak mengirim spesifikasi — update ke v3.2' : 'EA tidak mengirim spesifikasi kontrak';
     const connNotice = [`🔌 Data dari ${connInfo.broker || 'broker'}${connInfo.server ? ' / ' + connInfo.server : ''} (simbol ${connInfo.brokerSymbol}${connInfo.id === 'legacy' ? ', koneksi lama' : ''}).`,
-      connInfo.others.length ? `Ada ${connInfo.others.length} koneksi broker lain aktif untuk ${pairId}; data TIDAK dicampur.` : null].filter(Boolean).join(' ');
+      connInfo.others.length ? `Ada ${connInfo.others.length} koneksi broker lain aktif untuk ${pairId}; data TIDAK dicampur.` : null,
+      snapshotSpreadMinutes(snapshots) > 6 ? `⏱ Snapshot antar timeframe berselisih ${snapshotSpreadMinutes(snapshots).toFixed(1)} menit (bukan satu siklus kiriman EA): cocokkan harga dengan chart sebelum memakai level.` : null].filter(Boolean).join(' ');
     const quoteSnap = snapshots.find((x) => x.timeframe === 'M5') || snapshots.find((x) => x.timeframe === 'M15');
     const quotePrice = Number(quoteSnap?.bid || quoteSnap?.ask || quoteSnap?.bars?.at(-1)?.close || 0);
     const profile = PAIRS[pairId] || resolvePair(pairId);
@@ -621,7 +622,7 @@ export async function POST(req) {
             smcNotes.push(`🧭 BIAS UTAMA ditulis ${rb.headline} oleh model, tetapi struktur H4 mesin ${rb.bias}; bias disamakan ke mesin.`);
           }
           for (const fix of [
-            (m) => syncBiasLabels(m, rb.bias),
+            (m) => syncBiasLabels(m, isNeutralHeadline(extractBias(txt)) ? 'NETRAL' : rb.bias),
             (m) => syncTfBias(m, smcAnalyses),
             (m) => syncLevelLabels(m, smcAnalyses, feedPx),
             (m) => syncSummaryLevels(m, smcAnalyses, feedPx),
@@ -736,7 +737,7 @@ export async function POST(req) {
           const rb = resolveBias(extractBias(markdown), mt4ContextUsed.smc?.higherBias);
           const anl = mt4ContextUsed.smc?.analyses || [];
           const biasOf = (tf) => anl.find((x) => x.timeframe === tf && x.status === 'OK')?.bias;
-          decision = buildDecision({ markdown, bias: rb.bias, zoneRes: mt4ContextUsed.zoneRes, alignment: mt4ContextUsed.smc?.alignment ?? null,
+          decision = buildDecision({ markdown, bias: rb.bias, neutral: isNeutralHeadline(extractBias(markdown)), zoneRes: mt4ContextUsed.zoneRes, alignment: mt4ContextUsed.smc?.alignment ?? null,
             htf: { D1: biasOf('D1'), W1: biasOf('W1') }, atrM5: Number(anl.find((x) => x.timeframe === 'M5' && x.status === 'OK')?.atr14) || 0 });
           if (decision.htfConflict) {
             const before = markdown;

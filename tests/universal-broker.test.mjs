@@ -11,7 +11,7 @@ for (const f of ['mt4Market.js', 'instruments.js', 'brokerSpec.js', 'pairs.js', 
 const imp = (f) => import(pathToFileURL(path.join(d, f)).href);
 const { normalizeSymbol } = await imp('instruments.js');
 const { normalizeSpec, specMult, lotFloorSpec, specPromptBlock, stepDecimals } = await imp('brokerSpec.js');
-const { validateMarketPayload, groupByConnection, pickConnection } = await imp('mt4Market.js');
+const { validateMarketPayload, groupByConnection, pickConnection, snapshotSpreadMinutes } = await imp('mt4Market.js');
 const { PAIRS, riskMult, PAIR_ID_OK } = await imp('pairs.js');
 const { verifyRiskTables } = await imp('riskCheck.js');
 
@@ -283,4 +283,11 @@ test('properti: batas risiko per arah — kombinasi acak tidak pernah lolos mele
     assert.ok(total <= maxRisk + 0.02, `total risiko ${total.toFixed(2)} > batas ${maxRisk} (iterasi ${n})`);
   }
   assert.ok(checked > 100, 'cukup banyak order aktif teruji');
+});
+
+test('selisih waktu snapshot antar timeframe dihitung (peringatan bila > 6 menit)', () => {
+  const at = (m) => ({ received_at: new Date(1700000000000 + m * 60000).toISOString() });
+  assert.equal(snapshotSpreadMinutes([at(0), at(0.5), at(1)]), 1);
+  assert.ok(snapshotSpreadMinutes([at(0), at(9)]) > 6);
+  assert.equal(snapshotSpreadMinutes([at(0)]), 0);
 });
