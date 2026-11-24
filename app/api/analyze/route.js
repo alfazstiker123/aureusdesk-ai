@@ -888,7 +888,7 @@ export async function POST(req) {
     // Jejak audit: konfigurasi + snapshot per timeframe + model + versi; disalin ke riwayat (tidak berubah saat snapshot baru masuk)
     let audit = null;
     try {
-      const cfg = buildConfig({ balance, risk, riskUsd, zones, zonesOff, capPerDirection, strict, mode: wantTwoStage ? '2stage' : 'single', engine: engineGw ? 'gateway' : 'gemini', geminiModel, gwModel, marketSource, pairChoice, connectionId, copyFmt: body.copyFmt });
+      const cfg = buildConfig({ balance, risk, riskUsd, zones, zonesOff, capPerDirection, strict, mode: body.mode, modeEffective: wantTwoStage ? '2stage' : 'single', engine: engineGw ? 'gateway' : 'gemini', geminiModel, gwModel, marketSource, pairChoice, connectionId, copyFmt: body.copyFmt });
       audit = buildAudit({ config: cfg, ctx: mt4ContextUsed, usedModel: used?.model || '', requestedModel: engineGw ? gwModel : geminiModel, bias: biasInfo, decision });
       notices.push(auditLine(audit));
     } catch (e) { console.error('[analyze] audit error:', e); }

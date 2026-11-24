@@ -284,3 +284,13 @@ test('snapshot MT4 tanpa kolom id: identitas = kunci upsert koneksi|simbol|TF (k
   assert.ok(!cols.includes('id')); // regresi: select id → HTTP 400 "Tidak dapat membaca OHLC"
   assert.ok(cols.includes('connection_id') && cols.includes('bars') && cols.includes('received_at'));
 });
+
+test('mesin gateway memaksa 2 tahap: "Mode" 2tahap vs single BUKAN perbedaan konfigurasi (false positive dari analisa live 16.53), tetapi beda saldo/Zona 1 tetap terdeteksi', () => {
+  const saved = buildConfig({ ...BODY, engine: 'gateway', mode: 'single', modeEffective: '2stage', copyFmt: 'AUTO' });
+  assert.equal(saved.mode, 'single'); assert.equal(saved.modeEffective, '2tahap');
+  const live = { balance: 1400, risk: 2, zoneMode: 'tiga', zone1: 'OFF', strict: true, mode: 'single', engine: 'gateway', marketSource: 'cloud', digits: 'AUTO' };
+  assert.deepEqual(configDiff({ ...saved, mode: '2tahap' }, live).map((x) => x.key), ['balance', 'zone1', 'marketSource'].filter((k) => k !== 'marketSource' || saved.marketSource !== 'cloud'));
+  assert.ok(!configDiff({ ...saved, mode: '2tahap' }, live).some((x) => x.key === 'mode'));
+  // mesin gemini: perbedaan mode tetap dilaporkan
+  assert.ok(configDiff({ mode: '2tahap', engine: 'gemini' }, { mode: 'single', engine: 'gemini' }).some((x) => x.key === 'mode'));
+});

@@ -101,3 +101,6 @@ Akar masalah (audit PC 16.13 vs HP 16.14, snapshot sama): (1) saldo & Zona 1 ber
 
 ### Hotfix #10.1 — HTTP 400 "Tidak dapat membaca OHLC"
 Penyebab: Audit #10 menambah kolom `id` ke select tabel `mt4_market_snapshots`, padahal tabel itu tidak punya kolom `id` (hanya `trading_analyses`). Akibatnya PostgREST 400 dan semua analisa tanpa/dengan OHLC gagal. Perbaikan: `id` dihapus dari select; identitas snapshot di audit = kunci upsert `koneksi|simbol|TF`. Tes regresi: select snapshot tidak boleh memuat `id`. 271/271.
+
+### Hotfix #10.2 — Peringatan konfigurasi "Mode" salah (false positive)
+Analisa live 16.53: mesin gateway selalu memaksa alur 2 tahap, sedangkan pilihan UI "mode" tetap `single`, sehingga kotak peringatan menuduh "analisa 2tahap · perangkat ini single". Perbaikan: `configDiff` mengabaikan Mode bila mesin = gateway; audit baru menyimpan `mode` (pilihan UI) dan `modeEffective` (dijalankan server). Beda saldo/Zona 1 tetap terdeteksi. 272/272.
