@@ -11,8 +11,11 @@ import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
 import { syncInvalidation, labelConfirmationLevels } from '@/lib/invalidation';
 import { spreadInfo, spreadWarnings } from '@/lib/spreadCheck';
 import { zoneOverlap } from '@/lib/overlap';
+import { decideBias, structureTfOf, syncHeadline, insertBiasBlock } from '@/lib/biasFinal';
+import { buildAudit, buildConfig, auditLine } from '@/lib/auditTrail';
+import { riskTransparency, insertRiskTransparency } from '@/lib/riskTransparency';
 import { buildDecision, insertDecision, insufficientDecision, dataGap } from '@/lib/decision';
-import { resolveBias, isNeutralHeadline, syncHeadlineBias, syncBiasLabels, syncTfBias, syncLevelLabels, syncSummaryLevels, syncExpiry } from '@/lib/consistency';
+import { isNeutralHeadline, syncBiasLabels, syncTfBias, syncLevelLabels, syncSummaryLevels, syncExpiry } from '@/lib/consistency';
 import { getConnectionSnapshots, marketContext, mt4SymbolForPair, snapshotSpreadMinutes } from '@/lib/mt4Market';
 import { specPromptBlock, specNotice } from '@/lib/brokerSpec';
 import { getCloudMarketSnapshots, cloudMarketContext, cloudProxyOf, applyBasis } from '@/lib/cloudMarket';
@@ -263,11 +266,10 @@ function markDeadCandidates(zc, dead = []) {
   }).join('\n');
 }
 
-// Arah bias final (BUY/SELL/null) dari headline + mesin; dipakai untuk menandai order VALIDATED vs CANDIDATE
-function rb0Dir(markdown, ctx) {
-  const rb = resolveBias(extractBias(markdown), ctx?.smc?.higherBias);
-  if (isNeutralHeadline(extractBias(markdown))) return null;
-  return rb.bias === 'BULLISH' ? 'BUY' : rb.bias === 'BEARISH' ? 'SELL' : null;
+// Arah bias final (BUY/SELL/null) dari keputusan bias server (lib/biasFinal): dipakai menandai order VALIDATED vs CANDIDATE
+function rb0Dir(info) {
+  if (!info || info.neutral) return null;
+  return info.direction === 'BULLISH' ? 'BUY' : info.direction === 'BEARISH' ? 'SELL' : null;
 }
 
 export async function POST(req) {
@@ -624,6 +626,8 @@ export async function POST(req) {
       const z1Off = disableZoneRows(wkFix.markdown, zonesOff);
       const rawTxt = z1Off.markdown;
       let txt = rawTxt;
+      // Bias final ditentukan SATU kali dari teks asli model + struktur mesin; dipakai header, label arah, keputusan server, 4B.
+      const biasInfo = decideBias({ modelHeadline: extractBias(rawTxt), engineBias: mt4ContextUsed?.smc?.higherBias, structureTf: structureTfOf(mt4ContextUsed?.smc?.analyses) });
       let smcNotes = [];
       if (pairCfg && smcAnalyses?.length) {
         try {
@@ -636,13 +640,12 @@ export async function POST(req) {
           txt = tpFix.markdown;
           smcNotes = [...smcNotes, ...tpFix.notes];
           // Konsistensi narasi vs mesin: bias, label arah, bias TF, nama Level Kunci, Waktu Berakhir (server menang atas Gemini)
-          const rb = resolveBias(extractBias(txt), mt4ContextUsed.smc?.higherBias);
-          if (rb.overridden) {
-            txt = syncHeadlineBias(txt, rb.bias);
-            smcNotes.push(`🧭 BIAS UTAMA ditulis ${rb.headline} oleh model, tetapi struktur H4 mesin ${rb.bias}; bias disamakan ke mesin.`);
+          if (biasInfo.override) {
+            txt = syncHeadline(txt, biasInfo);
+            smcNotes.push(`🧭 KONFLIK BIAS: model menulis ${biasInfo.model.direction || 'arah tidak jelas'}, struktur ${biasInfo.structureTf} mesin ${biasInfo.structure}; bias final server = ${biasInfo.final} (rincian di panel Bias).`);
           }
           for (const fix of [
-            (m) => syncBiasLabels(m, isNeutralHeadline(extractBias(txt)) ? 'NETRAL' : rb.bias),
+            (m) => syncBiasLabels(m, biasInfo.final),
             (m) => syncTfBias(m, smcAnalyses),
             (m) => syncLevelLabels(m, smcAnalyses, feedPx),
             (m) => syncSummaryLevels(m, smcAnalyses, feedPx),
@@ -719,9 +722,9 @@ export async function POST(req) {
       if (wkFix.notes.length) smcNotes = [...smcNotes, `🗓️ ${wkFix.notes[0]}`];
       if (dcFix.notes.length) smcNotes = [...smcNotes, `🕓 ${dcFix.notes[0]}${dcFix.notes.length > 1 ? ` (+${dcFix.notes.length - 1} baris)` : ''}.`];
       if (smcNotes.length) g = { ...g, notes: [...smcNotes, ...(g.notes || [])] };
-      return { checked: c, markdown: md, guard: g, fixes, last, atr, dead };
+      return { checked: c, markdown: md, guard: g, fixes, last, atr, dead, biasInfo };
     };
-    let { checked, markdown, guard, fixes, last: lastPx, atr: atrUsed, dead: deadZones } = runChecks(text);
+    let { checked, markdown, guard, fixes, last: lastPx, atr: atrUsed, dead: deadZones, biasInfo } = runChecks(text);
     let finalText = text;
     let retried = false;
 
@@ -767,7 +770,7 @@ export async function POST(req) {
           const r2 = runChecks(t2);
           // pakai hasil ulang hanya jika lebih baik (lebih sedikit pelanggaran)
           if (r2.fixes.length < fixes.length) {
-            ({ checked, markdown, guard, fixes, last: lastPx, atr: atrUsed, dead: deadZones } = r2);
+            ({ checked, markdown, guard, fixes, last: lastPx, atr: atrUsed, dead: deadZones, biasInfo } = r2);
             finalText = t2;
           }
         }
@@ -796,10 +799,9 @@ export async function POST(req) {
         const gap = dataGap({ hasSnapshots: !!mt4ContextUsed?.snapshots?.length, analyses: mt4ContextUsed?.smc?.analyses, priceMismatch: mt4Status === 'PRICE_MISMATCH' });
         if (gap) decision = insufficientDecision(gap);
         else {
-          const rb = resolveBias(extractBias(markdown), mt4ContextUsed.smc?.higherBias);
           const anl = mt4ContextUsed.smc?.analyses || [];
           const biasOf = (tf) => anl.find((x) => x.timeframe === tf && x.status === 'OK')?.bias;
-          decision = buildDecision({ markdown, bias: rb.bias, neutral: isNeutralHeadline(extractBias(markdown)), zoneRes: mt4ContextUsed.zoneRes, alignment: mt4ContextUsed.smc?.alignment ?? null,
+          decision = buildDecision({ markdown, bias: biasInfo.direction || 'NETRAL', neutral: biasInfo.neutral, zoneRes: mt4ContextUsed.zoneRes, alignment: mt4ContextUsed.smc?.alignment ?? null,
             htf: { D1: biasOf('D1'), W1: biasOf('W1') }, atrM5: Number(anl.find((x) => x.timeframe === 'M5' && x.status === 'OK')?.atr14) || 0 });
           if (decision.htfConflict) {
             const before = markdown;
@@ -809,10 +811,17 @@ export async function POST(req) {
         }
         // Status tiap order 4B (CANDIDATE / VALIDATED) + Aturan Pasang & total risiko dari tabel final, sesuai keputusan server
         if (pairCfg) {
-          const fo = finalizeOrders(markdown, { status: decision.status, dir: rb0Dir(markdown, mt4ContextUsed), maxRiskUsd: riskUsd, dec: pairCfg.dec, candidates: checked?.candidates || [] });
+          const fo = finalizeOrders(markdown, { status: decision.status, dir: rb0Dir(biasInfo), maxRiskUsd: riskUsd, dec: pairCfg.dec, candidates: checked?.candidates || [] });
           markdown = fo.markdown;
         }
         markdown = insertDecision(markdown, decision.text);
+        // Transparansi risiko (order ditolak karena batas) + panel Bias 3 lapis; keduanya membaca hasil validator, tidak mengubah angka
+        try {
+          const rt = riskTransparency({ candidates: checked?.candidates || [], maxRiskUsd: riskUsd, riskPct: Number(risk) || 0, final: biasInfo.final, decision });
+          markdown = insertRiskTransparency(markdown, rt.text);
+          const dt = /KEPUTUSAN SERVER — ([^:*]+):/.exec(decision.text)?.[1]?.trim() || '';
+          markdown = insertBiasBlock(markdown, biasInfo, { decisionTitle: dt });
+        } catch (e2) { console.error('[analyze] bias/risk block error:', e2); }
       } catch (e) {
         console.error('[analyze] decision error:', e);
       }
@@ -876,6 +885,13 @@ export async function POST(req) {
       markdown = markdown.replace(/(Keyakinan\s*:?\s*\**\s*)Tinggi/i, '$1Sedang');
       notices.push('🎚 Keyakinan diturunkan ke Sedang (screenshot basi atau model cadangan).');
     }
+    // Jejak audit: konfigurasi + snapshot per timeframe + model + versi; disalin ke riwayat (tidak berubah saat snapshot baru masuk)
+    let audit = null;
+    try {
+      const cfg = buildConfig({ balance, risk, riskUsd, zones, zonesOff, capPerDirection, strict, mode: wantTwoStage ? '2stage' : 'single', engine: engineGw ? 'gateway' : 'gemini', geminiModel, gwModel, marketSource, pairChoice, connectionId, copyFmt: body.copyFmt });
+      audit = buildAudit({ config: cfg, ctx: mt4ContextUsed, usedModel: used?.model || '', requestedModel: engineGw ? gwModel : geminiModel, bias: biasInfo, decision });
+      notices.push(auditLine(audit));
+    } catch (e) { console.error('[analyze] audit error:', e); }
     if (notices.length > 2) {
       markdown = `> **Catatan sistem**\n${notices.map((n) => `> - ${n}`).join('\n')}\n\n` + markdown;
     } else if (notices.length) {
@@ -901,6 +917,7 @@ export async function POST(req) {
       smcTimeframes: mt4Report?.analyses?.map((x) => x.timeframe) || [],
       marketDataSource: mt4ContextUsed?.source || 'NONE',
       candles: candlePack(mt4ContextUsed),
+      audit,
       zoneRetry: retried,
       directionErrors: fixes.length,
       orderGuard: { notes: guard.notes.length, cancel: guard.flags.cancel.length, shift: guard.flags.shift.length, skipped: guard.skipped },

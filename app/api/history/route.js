@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabase, TABLE, BUCKET } from '@/lib/supabase';
 import { requirePin } from '@/lib/auth';
+import { sanitizeAudit } from '@/lib/auditTrail';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -142,10 +143,18 @@ export async function POST(req) {
       candles: cleanCandles(body.candles),
     };
 
-    const { data, error } = await sb.from(TABLE).insert(row).select(LIST_COLUMNS).single();
-    if (error) throw error;
+    // Jejak audit (konfigurasi, snapshot, model, versi). Bila kolom audit_meta belum dibuat, simpan tanpa itu dan beri peringatan (riwayat lama tidak terpengaruh).
+    const audit = sanitizeAudit(body.audit);
+    let auditWarning = null;
+    let ins = await sb.from(TABLE).insert(audit ? { ...row, audit_meta: audit } : row).select(LIST_COLUMNS).single();
+    if (ins.error && audit && /audit_meta/i.test(ins.error.message || '')) {
+      auditWarning = 'Kolom audit_meta belum ada di Supabase; jejak audit tidak tersimpan (jalankan supabase/migration-v4-audit-trail.sql).';
+      ins = await sb.from(TABLE).insert(row).select(LIST_COLUMNS).single();
+    }
+    if (ins.error) throw ins.error;
+    const data = ins.data;
 
-    return NextResponse.json({ item: data, storageWarning });
+    return NextResponse.json({ item: data, storageWarning, auditWarning });
   } catch (err) {
     return NextResponse.json({ error: err?.message || 'Gagal menyimpan ke Supabase.' }, { status: 500 });
   }

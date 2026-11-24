@@ -8,9 +8,11 @@ import { biasTone, toneClass } from '@/components/HistoryPanel';
 import { segmentSection, parseMeta } from '@/lib/zoneParse';
 import { fixInlineTables } from '@/lib/markdownFix';
 import { resolvePair } from '@/lib/pairs';
+import { parseBiasBlock } from '@/lib/biasFinal';
+import { configDiff } from '@/lib/configDiff';
 
 // Ringkasan (hero) + peta zona + bagian 1-4 bergaya kartu.
-export default function ResultView({ content, priceDecimals, mode, pairId, onToast, candles = null, orderCtx = null }) {
+export default function ResultView({ content, priceDecimals, mode, pairId, onToast, candles = null, orderCtx = null, audit = null, configNow = null }) {
   const [guide, setGuide] = useState(false);
   const info = useMemo(() => {
     const md = fixInlineTables(content || '');
@@ -20,10 +22,12 @@ export default function ResultView({ content, priceDecimals, mode, pairId, onToa
     const pend = segs.find((s) => s.type === 'pending')?.rows || [];
     const dm = md.match(/^> (🎯|⛔|⚠️) \*\*KEPUTUSAN SERVER — ([^:*]+):\*\*\s*(.*)$/mu);
     const decision = dm ? { icon: dm[1], title: dm[2].trim(), text: dm[3].trim() } : null;
-    return { meta, exec, pend, decision };
+    return { meta, exec, pend, decision, biasPanel: parseBiasBlock(md) };
   }, [content]);
 
-  const { meta, exec, pend, decision } = info;
+  const { meta, exec, pend, decision, biasPanel } = info;
+  // Peringatan saja (tanpa sinkronisasi): konfigurasi analisa tersimpan vs pengaturan perangkat ini
+  const diffs = useMemo(() => (audit?.config && configNow ? configDiff(audit.config, configNow) : []), [audit, configNow]);
   const pair = meta.pair || pairId || '';
   const dec = resolvePair(pair)?.dec ?? (Number.isFinite(meta.price) && meta.price < 20 ? 5 : 2);
   const tone = biasTone(meta.bias || '');
@@ -66,6 +70,29 @@ export default function ResultView({ content, priceDecimals, mode, pairId, onToa
         <div className={`rounded-2xl border p-3.5 text-xs leading-relaxed sm:text-sm print:hidden ${decision.icon === '🎯' ? 'border-up/40 bg-up/10 text-strong' : decision.icon === '⛔' ? 'border-down/40 bg-down/10 text-strong' : 'border-amber-400/40 bg-amber-400/10 text-strong'}`}>
           <div className="mb-1 font-extrabold">{decision.icon} Keputusan server: {decision.title}</div>
           <p className="text-soft">{decision.text}</p>
+        </div>
+      )}
+
+
+      {biasPanel && (
+        <div className={`rounded-2xl border p-3 text-xs sm:text-sm print:hidden ${biasPanel.conflict ? 'border-amber-400/50 bg-amber-400/10' : 'border-line bg-panel2'}`}>
+          <div className="mb-2 font-extrabold text-strong">🧭 Bias: model vs struktur vs final</div>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-xl border border-line bg-night/70 p-2"><div className="text-[10px] font-semibold text-muted">Model Gemini</div><div className="mt-0.5 break-words font-mono text-[11px] font-extrabold text-soft sm:text-xs">{biasPanel.model}</div></div>
+            <div className="rounded-xl border border-line bg-night/70 p-2"><div className="text-[10px] font-semibold text-muted">Struktur {biasPanel.structureTf} mesin</div><div className="mt-0.5 break-words font-mono text-[11px] font-extrabold text-soft sm:text-xs">{biasPanel.structure}</div></div>
+            <div className="rounded-xl border border-gold/40 bg-night/70 p-2"><div className="text-[10px] font-semibold text-gold">Final server</div><div className="mt-0.5 break-words font-mono text-[11px] font-extrabold text-strong sm:text-xs">{biasPanel.final}</div></div>
+          </div>
+          {biasPanel.note && <p className="mt-2 leading-relaxed text-soft">{biasPanel.conflict ? '⚠️ Konflik: ' : ''}{biasPanel.note.replace(/^KONFLIK BIAS:\s*/, '')}</p>}
+        </div>
+      )}
+
+      {diffs.length > 0 && (
+        <div className="rounded-2xl border border-amber-400/40 bg-amber-400/10 p-3 text-xs leading-relaxed text-soft sm:text-sm print:hidden">
+          <div className="mb-1 font-extrabold text-strong">⚙️ Konfigurasi analisa ini berbeda dari pengaturan perangkat ini</div>
+          <ul className="list-disc space-y-0.5 pl-4">
+            {diffs.map((d) => <li key={d.key}>{d.label}: analisa <b>{d.saved}</b> · perangkat ini <b>{d.now}</b></li>)}
+          </ul>
+          <p className="mt-1 text-[11px] text-muted">Hasil bisa berbeda walau snapshot sama (mis. batas risiko atau Zona 1). Pengaturan tidak disinkronkan antar perangkat.{audit?.configHash ? ` Konfigurasi analisa #${audit.configHash}.` : ''}</p>
         </div>
       )}
 

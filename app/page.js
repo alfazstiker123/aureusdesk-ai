@@ -362,6 +362,7 @@ export default function Home() {
         },
         thumbnails: it.thumbnails || [],
         candles: it.candles || null,
+        audit: it.audit_meta || null,
         orderResults: it.order_results || {},
       });
       setActiveId(it.id);
@@ -545,7 +546,7 @@ export default function Home() {
           'Content-Type': 'application/json',
           ...(apiKey.trim() ? { 'x-gemini-key': apiKey.trim() } : {}),
         },
-        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict, mode, gwModel, engine, geminiModel, marketSource, zoneStyle, skipZone1: zoneStyle === 'three' && skipZone1, connectionId: connectionId || undefined }),
+        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict, mode, gwModel, engine, geminiModel, marketSource, zoneStyle, skipZone1: zoneStyle === 'three' && skipZone1, connectionId: connectionId || undefined, copyFmt }),
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || 'Gagal menganalisa.');
@@ -557,6 +558,7 @@ export default function Home() {
         meta: { created_at: createdAt, session, balance: Number(balance), risk: Number(risk), pair: data.pair || (pair !== 'AUTO' ? pair : null) },
         thumbnails: [],
         candles: data.candles || null,
+        audit: data.audit || null,
         orderResults: {},
       });
       setTab('analisa');
@@ -575,6 +577,7 @@ export default function Home() {
           session,
           thumbnails: thumbs,
           candles: data.candles || null,
+          audit: data.audit || null,
         }),
       });
       const saved = await safeJson(saveRes);
@@ -584,7 +587,7 @@ export default function Home() {
         setActiveId(saved.item.id);
         setHistory((h) => [saved.item, ...h]);
         setResult((r) => (r ? { ...r, thumbnails: saved.item.thumbnails || [] } : r));
-        showToast(saved.storageWarning ? `Tersimpan (thumbnail gagal: ${saved.storageWarning})` : '✅ Tersimpan ke jurnal Supabase');
+        showToast(saved.storageWarning ? `Tersimpan (thumbnail gagal: ${saved.storageWarning})` : saved.auditWarning ? `Tersimpan, tetapi ${saved.auditWarning}` : '✅ Tersimpan ke jurnal Supabase');
       }
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
     } catch (e) {
@@ -990,7 +993,7 @@ export default function Home() {
                 ))}
               </div>
 
-              <ResultView candles={result.candles} content={result.markdown} priceDecimals={priceDecimals} mode={navMode} pairId={result.meta?.pair} onToast={showToast} orderCtx={{ analysisId: activeId, orderResults: result.orderResults || {}, onSaveOrder: saveOrderResult }} />
+              <ResultView audit={result.audit || null} configNow={{ balance: Number(balance), risk: Number(risk), zoneMode: zoneStyle === 'three' ? 'tiga' : 'dua', zone1: zoneStyle === 'three' && skipZone1 ? 'OFF' : 'ON', strict, mode: mode === '2stage' ? '2tahap' : 'single', engine, geminiModel: geminiModel || undefined, marketSource, digits: copyFmt }} candles={result.candles} content={result.markdown} priceDecimals={priceDecimals} mode={navMode} pairId={result.meta?.pair} onToast={showToast} orderCtx={{ analysisId: activeId, orderResults: result.orderResults || {}, onSaveOrder: saveOrderResult }} />
             </div>
           )}
 

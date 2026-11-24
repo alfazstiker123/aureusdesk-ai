@@ -769,3 +769,15 @@ test('route: overlap & kandidat risiko terpasang di route', () => {
   assert.match(src, /zoneOverlap\(md, \{ analyses: smcAnalyses/);
   assert.match(src, /candidates: checked\?\.candidates \|\| \[\]/);
 });
+
+// Review eksternal: kalimat invalidation yang sama untuk beberapa zona TIDAK otomatis valid untuk semua zona; tiap zona dinilai dengan sisi/rentang/SL-nya sendiri.
+test('klausa yang sama dinilai per zona: valid untuk zona dengan struktur di luar zona, ditolak untuk zona yang levelnya berada di dalam/di atas zona itu', () => {
+  const levels = structuralLevels([{ timeframe: 'H1', status: 'OK', supports: [{ price: 3527.11 }], resistances: [], structureEvents: [], orderBlocks: [], fvgs: [] }]);
+  const clause = 'candle H1 close di bawah 3527.11';
+  const z3 = judgeClause(clause, { side: 'BUY', lo: 3529.96, hi: 3543.56, sl: 3526.9, entry: 3543.56, levels, tol: 0.05 }); // level di bawah zona
+  const z1 = judgeClause(clause, { side: 'BUY', lo: 3500.0, hi: 3510.0, sl: 3495, entry: 3510, levels, tol: 0.05 }); // level di atas zona Z1 → sisi salah
+  assert.equal(z3.kind, 'struct');
+  assert.equal(z1.kind, 'wrong');
+  const sl = judgeClause(clause, { side: 'BUY', lo: 3529.96, hi: 3543.56, sl: 3527.11, entry: 3543.56, levels, tol: 0.05 }); // SL zona ini = level itu
+  assert.equal(sl.atSl, true); // ditandai sama dengan SL (hubungan SL dijelaskan, bukan dianggap invalidation terpisah)
+});
