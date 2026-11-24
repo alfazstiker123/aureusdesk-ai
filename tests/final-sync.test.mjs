@@ -168,7 +168,7 @@ test('enforceSmcZones: SL beda 0.27 tetap disamakan walau ATR besar (akar masala
 
 test('route memakai sinkron final: tahap 1 sebelum validator risiko, tahap 2 dengan pengali final + audit + pembatalan', () => {
   const src = fs.readFileSync(new URL('../app/api/analyze/route.js', import.meta.url), 'utf8');
-  assert.match(src, /import \{ reconcileZones, cancelMismatched, syncNarrative \} from '@\/lib\/finalSync'/);
+  assert.match(src, /import \{ reconcileZones, cancelMismatched, syncNarrative[^}]*\} from '@\/lib\/finalSync'/);
   const i1 = src.indexOf('reconcileZones(txt');
   const iRisk = src.indexOf('verifyRiskTables(txt');
   const i2 = src.indexOf('reconcileZones(md');
@@ -409,7 +409,7 @@ test('integrasi: tahap 1 -> validator risiko -> tahap 2 -> teks bebas, lot turun
 
 test('route: teks bebas disinkronkan setelah audit/pembatalan tahap 2, dengan daftar perubahan angka lama', () => {
   const src = fs.readFileSync(new URL('../app/api/analyze/route.js', import.meta.url), 'utf8');
-  assert.match(src, /import \{ reconcileZones, cancelMismatched, syncNarrative \}/);
+  assert.match(src, /import \{ reconcileZones, cancelMismatched, syncNarrative[^}]*\} from '@\/lib\/finalSync'/);
   assert.ok(src.indexOf('cancelMismatched(md') < src.indexOf('syncNarrative(md'));
   assert.match(src, /stale: \[\.\.\.staleChanges, \.\.\.rc2\.changes\]/);
 });

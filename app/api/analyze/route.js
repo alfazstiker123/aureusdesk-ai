@@ -16,7 +16,7 @@ import { getCloudMarketSnapshots, cloudMarketContext, cloudProxyOf, applyBasis }
 import { metalsWeekendClosed, fmtMt4 } from '@/lib/marketTime';
 import { buildSmcReport, buildZoneCandidates, buildZoneCandidates3 } from '@/lib/smc/engine';
 import { enforceSmcZones, syncTargets, disableZoneRows } from '@/lib/smc/guard';
-import { reconcileZones, cancelMismatched, syncNarrative } from '@/lib/finalSync';
+import { reconcileZones, cancelMismatched, syncNarrative, deadKeys, pruneNotes, finalizeOrders } from '@/lib/finalSync';
 import { normalizeIdNumbers } from '@/lib/numFormat';
 import { fixWeekendExpiry, nextOpenMs } from '@/lib/weekendExpiry';
 
@@ -249,6 +249,22 @@ function shouldFallback(status, json) {
     st === 'UNAVAILABLE' ||
     /quota|rate.?limit|exhausted|overload|unavailable|google.?search|grounding|tool/.test(msg)
   );
+}
+
+// Lampiran kandidat mesin: zona yang dibatalkan validator diberi tanda agar tidak terbaca sebagai setup
+function markDeadCandidates(zc, dead = []) {
+  if (!zc || !dead.length) return zc;
+  return String(zc).split('\n').map((l) => {
+    const m = /^-\s*(BUY|SELL)\s+Zona\s*(\d)\b/i.exec(l);
+    return m && dead.includes(`${m[1].toUpperCase()}${m[2]}`) && !/⛔/.test(l) ? `${l}  ⛔ [kandidat mesin; DIBATALKAN validator server (R:R/risiko/lot/zona) - bukan setup]` : l;
+  }).join('\n');
+}
+
+// Arah bias final (BUY/SELL/null) dari headline + mesin; dipakai untuk menandai order VALIDATED vs CANDIDATE
+function rb0Dir(markdown, ctx) {
+  const rb = resolveBias(extractBias(markdown), ctx?.smc?.higherBias);
+  if (isNeutralHeadline(extractBias(markdown))) return null;
+  return rb.bias === 'BULLISH' ? 'BUY' : rb.bias === 'BEARISH' ? 'SELL' : null;
 }
 
 export async function POST(req) {
@@ -675,17 +691,22 @@ export async function POST(req) {
         md = nr.markdown;
         if (nr.notes.length) smcNotes = [...smcNotes, `📝 ${nr.notes.length} baris teks bebas disamakan dengan tabel final (Entry/SL/TP/R:R/lot/risiko).`];
         if (nr.mismatches.length) smcNotes = [...smcNotes, `⚠️ ${nr.mismatches.length} baris teks bebas masih memuat angka yang tidak bisa dipetakan ke satu zona: ikuti tabel Bagian 3/4B.`];
-        if (rc2.cancelled.length || rc2.mismatches.length) smcNotes = [...smcNotes, '⚠️ Ada setup dibatalkan pada tahap akhir: "Total risiko" di catatan verifikasi dihitung sebelum pembatalan (nilai sebenarnya lebih kecil).'];
+        // Pembatalan karena 4B sudah menolak order (batas risiko / R:R / lot) tidak mengubah total; hanya pembatalan lain yang perlu catatan
+        if (rc2.cancelled.some((x) => !/tidak punya order/.test(x.why)) || rc2.mismatches.length) smcNotes = [...smcNotes, '⚠️ Ada setup dibatalkan pada tahap akhir: "Total risiko" di catatan verifikasi dihitung ulang dari order yang aktif.'];
       }
+      // Catatan lama yang menyebut zona yang akhirnya batal (mis. "entry 3545.95 berjarak ...") dibuang agar tidak ada angka usang
+      const dead = pairCfg ? deadKeys(md, { dec: pairCfg.dec }) : [];
+      smcNotes = pruneNotes(smcNotes, dead);
+      g = { ...g, notes: pruneNotes(g.notes || [], dead) };
       // error yang layak generate ulang: arah entry salah (guard) + arah SL/TP salah (guard Bagian 3, riskCheck 4B)
       const fixes = [...(g.flags?.fix || []), ...(c.fixes || [])];
       if (z1Off.notes.length) smcNotes = [...smcNotes, ...z1Off.notes];
       if (wkFix.notes.length) smcNotes = [...smcNotes, `🗓️ ${wkFix.notes[0]}`];
       if (dcFix.notes.length) smcNotes = [...smcNotes, `🕓 ${dcFix.notes[0]}${dcFix.notes.length > 1 ? ` (+${dcFix.notes.length - 1} baris)` : ''}.`];
       if (smcNotes.length) g = { ...g, notes: [...smcNotes, ...(g.notes || [])] };
-      return { checked: c, markdown: md, guard: g, fixes, last, atr };
+      return { checked: c, markdown: md, guard: g, fixes, last, atr, dead };
     };
-    let { checked, markdown, guard, fixes, last: lastPx, atr: atrUsed } = runChecks(text);
+    let { checked, markdown, guard, fixes, last: lastPx, atr: atrUsed, dead: deadZones } = runChecks(text);
     let finalText = text;
     let retried = false;
 
@@ -731,7 +752,7 @@ export async function POST(req) {
           const r2 = runChecks(t2);
           // pakai hasil ulang hanya jika lebih baik (lebih sedikit pelanggaran)
           if (r2.fixes.length < fixes.length) {
-            ({ checked, markdown, guard, fixes, last: lastPx, atr: atrUsed } = r2);
+            ({ checked, markdown, guard, fixes, last: lastPx, atr: atrUsed, dead: deadZones } = r2);
             finalText = t2;
           }
         }
@@ -771,6 +792,11 @@ export async function POST(req) {
             if (markdown !== before) htfNote = '🎚 Keyakinan diturunkan ke Sedang: bias H4/H1 melawan D1/W1.';
           }
         }
+        // Status tiap order 4B (CANDIDATE / VALIDATED) + Aturan Pasang & total risiko dari tabel final, sesuai keputusan server
+        if (pairCfg) {
+          const fo = finalizeOrders(markdown, { status: decision.status, dir: rb0Dir(markdown, mt4ContextUsed), maxRiskUsd: riskUsd, dec: pairCfg.dec });
+          markdown = fo.markdown;
+        }
         markdown = insertDecision(markdown, decision.text);
       } catch (e) {
         console.error('[analyze] decision error:', e);
@@ -783,7 +809,7 @@ export async function POST(req) {
     { const qt = mt4ContextUsed?.quote; if (qt) notices.push(`💱 Harga acuan zona: Bid ${qt.bid}${qt.ask ? ` / Ask ${qt.ask} (spread ${Number(qt.spread.toFixed(5))})` : ''}${qt.atWib ? `, kuotasi EA ${qt.atWib} WIB` : ''}. Struktur SMC dari candle tertutup (close ${qt.closeTf} ${qt.closeRef}).`); }
     if ((mt4Status === 'OHLC_HYBRID' || mt4Status === 'OHLC_ONLY') && mt4Report?.analyses?.length) {
       notices.push(`${mt4Status === 'OHLC_ONLY' ? '📡 OHLC ONLY (tanpa screenshot) aktif' : '📡 Data Hybrid aktif'}: OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'Cloud' : 'MT4 EA'} diterima dan lolos pemeriksaan. SMC dihitung deterministik dari candle tertutup; bukan probabilitas profit.`);
-      markdown = `> 📡 **V2 — OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'CLOUD' : 'MT4'} + SMC**\n> Sumber: ${mt4ContextUsed.source === 'CLOUD' ? `${mt4ContextUsed.provider || 'Cloud'} (feed exchange publik, bukan broker Anda)` : 'MT4 EA'}. Cocokkan harga dengan chart broker sebelum menggunakan level.\n\n${mt4Report.compactBlock}\n\n---\n\n${markdown}\n\n---\n\n### Lampiran: Detail SMC dari candle (referensi)\n\n\`\`\`text\n${mt4ContextUsed.zoneCandidates ? mt4ContextUsed.zoneCandidates + '\n\n' : ''}${mt4Report.promptBlock}\n\`\`\``;
+      markdown = `> 📡 **V2 — OHLC ${mt4ContextUsed.source === 'CLOUD' ? 'CLOUD' : 'MT4'} + SMC**\n> Sumber: ${mt4ContextUsed.source === 'CLOUD' ? `${mt4ContextUsed.provider || 'Cloud'} (feed exchange publik, bukan broker Anda)` : 'MT4 EA'}. Cocokkan harga dengan chart broker sebelum menggunakan level.\n\n${mt4Report.compactBlock}\n\n---\n\n${markdown}\n\n---\n\n### Lampiran: Detail SMC dari candle (referensi)\n\n\`\`\`text\n${mt4ContextUsed.zoneCandidates ? markDeadCandidates(mt4ContextUsed.zoneCandidates, deadZones) + '\n\n' : ''}${mt4Report.promptBlock}\n\`\`\``;
     } else if (mt4Status === 'PRICE_MISMATCH') {
       notices.push(`🚫 PRICE MISMATCH: harga screenshot dan feed pasar berbeda ${mt4PriceDeltaPct?.toFixed(2)}%. Jangan gunakan level entry dari analisa ini sebelum simbol/instrumen, waktu screenshot, dan chart diperiksa ulang.`);
     } else if (pairCfg) {

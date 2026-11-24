@@ -100,7 +100,7 @@ const RISK = `| Order | Harga Entry | Stop Loss | Take Profit | Jarak SL | Lot A
 |---|---|---|---|---|---|---|---|---|
 | Buy Limit Zona 1 (Scalping) | 3603.11 | 3599.50 | 3615.00 | 3.61 | 0.01 | $3.61 | 1:3.29 | 23 Nov 2026, 22:28 WIB |
 | Buy Limit Zona 2 (Intraday) | 3583.86 | 3574.28 | 3600.00 | 3.48 | 0.02 | $6.96 | 1:2 | 24 Nov 2026, 02:28 WIB |
-| Buy Limit Zona 3 (Swing) | 3553.97 | 3539.96 | 3575.00 | 4.16 | 0.02 | $8.32 | 1:2.5 | 24 Nov 2026, 05:00 WIB |
+| Buy Limit Zona 3 (Swing) | 3553.97 | 3539.96 | 3610.00 | 4.16 | 0.02 | $8.32 | 1:2.5 | 24 Nov 2026, 05:00 WIB |
 
 **Rincian Hitung Risiko:**
 - Buy Limit Zona 1 (Scalping): 0.01 x 3.61 x 100 = $3.61
