@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server';
 import { GEMINI_MODEL, GEMINI_FALLBACK_MODELS, buildSystemInstruction, buildUserPrompt, extractBias, zoneStyleAddendum, ZONE1_OFF_SYSTEM, OHLC_ONLY_SYSTEM } from '@/lib/prompt';
-import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice, resolvePair, parseATR, zoneRange, zoneRange3, rangeText } from '@/lib/pairs';
+import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice, resolvePair, parseATR, zoneRange, zoneRange3, rangeText, riskMult } from '@/lib/pairs';
+import { buildEngineOrders, lockToEngine, clearDeadDetail, engineSkeleton, engineOrdersPrompt, ordersSignature, finalTableSignature, ENGINE_ORDERS_VERSION } from '@/lib/engineOrders';
 import { gatewayChat, gwConfigured, gwModelOf, looksLikeAnalysis } from '@/lib/gateway';
 import { EXTRACT_SYSTEM, EXTRACT_SCHEMA, normalizeExtract, buildCandidates, formatDataBlock, STAGE2_ADDENDUM } from '@/lib/extract';
 import { requirePin } from '@/lib/auth';
 import { fixInlineTables } from '@/lib/markdownFix';
 import { buildFundamentalBlock } from '@/lib/calendar';
-import { verifyRiskTables, fixDailyClose } from '@/lib/riskCheck';
+import { verifyRiskTables, fixDailyClose, parseExpiryWIB } from '@/lib/riskCheck';
 import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
 import { syncInvalidation, labelConfirmationLevels } from '@/lib/invalidation';
 import { spreadInfo, spreadWarnings } from '@/lib/spreadCheck';
@@ -17,7 +18,7 @@ import { riskTransparency, insertRiskTransparency } from '@/lib/riskTransparency
 import { buildDecision, insertDecision, insufficientDecision, dataGap } from '@/lib/decision';
 import { isNeutralHeadline, syncBiasLabels, syncTfBias, syncLevelLabels, syncSummaryLevels, syncExpiry } from '@/lib/consistency';
 import { getConnectionSnapshots, marketContext, mt4SymbolForPair, snapshotSpreadMinutes } from '@/lib/mt4Market';
-import { specPromptBlock, specNotice } from '@/lib/brokerSpec';
+import { specPromptBlock, specNotice, lotFloorSpec, stepDecimals } from '@/lib/brokerSpec';
 import { getCloudMarketSnapshots, cloudMarketContext, cloudProxyOf, applyBasis } from '@/lib/cloudMarket';
 import { metalsWeekendClosed, fmtMt4 } from '@/lib/marketTime';
 import { buildSmcReport, buildZoneCandidates, buildZoneCandidates3 } from '@/lib/smc/engine';
@@ -389,9 +390,29 @@ export async function POST(req) {
         code: 'INSUFFICIENT_DATA',
       }, { status: 422 });
     }
+    // Mesin order deterministik: Entry/SL/TP/zona terisi/lot awal dari kandidat zona mesin + level struktur (bukan dari tulisan model).
+    const computeEngine = (pair) => {
+      try {
+        const ctx = mt4ContextUsed;
+        const an = ctx?.snapshots?.length ? ctx?.smc?.analyses : null;
+        const px = Number(ctx?.feedPrice || 0);
+        if (!pair || !an?.length || !ctx?.zoneRes || !(px > 0)) return null;
+        const spec = ctx.brokerSpec || null;
+        const RM = riskMult(pair, px, { spec });
+        const lotFor = (dist, budget) => {
+          const l = lotFloorSpec(budget / (dist * RM.mult), spec);
+          return l > 0 ? l : (spec?.minlot > 0 ? spec.minlot : 0.01);
+        };
+        const atrH1 = an.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14 || 0;
+        const eng = buildEngineOrders({ zoneRes: ctx.zoneRes, analyses: an, price: px, atrH1, dec: pair.dec, zones, zonesOff, riskUsd, lotFor });
+        eng.mult = RM.mult; eng.lotStr = (x) => x.toFixed(Math.max(2, stepDecimals(spec?.lotstep > 0 ? spec.lotstep : 0.01)));
+        return eng;
+      } catch (e) { console.error('[analyze] engine orders error:', e); return null; }
+    };
     const weekendMap = weekendMappingBlock(resolvedPair || fixedPair);
+    const engPrompt0 = engineOrdersPrompt(computeEngine(resolvedPair || fixedPair), (resolvedPair || fixedPair)?.dec ?? 2, zones);
     const parts = [{ text: buildUserPrompt({ balance, risk, session, labels, pair: resolvedPair || fixedPair, fundamental: fundamental.text, strict }) +
-      weekendMap + (marketInitial.text ? `\n\n${marketInitial.text}` : '') }];
+      weekendMap + (marketInitial.text ? `\n\n${marketInitial.text}` : '') + (engPrompt0 ? `\n\n${engPrompt0}` : '') }];
     images.forEach((img, i) => {
       parts.push({ text: `Gambar ${i + 1} — ${labels[i]}` });
       parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
@@ -551,6 +572,22 @@ export async function POST(req) {
     }
 
     if (two) used = { model: `2tahap:${two.model}` };
+    // Gemini/gateway gagal: tabel mesin tetap ditampilkan (tanpa narasi karangan) bila mesin order tersedia.
+    let aiDown = '';
+    const engineOnlyText = (why) => {
+      const pair = fixedPair || resolvedPair;
+      const eng = computeEngine(pair);
+      if (!eng) return null;
+      const an = mt4ContextUsed.smc.analyses;
+      const bz = mt4ContextUsed.smc?.higherBias;
+      const bias = bz === 'BULLISH' || bz === 'BEARISH' ? bz : 'NETRAL';
+      const a1 = an.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14, a4 = an.find((x) => x.timeframe === 'H4' && x.status === 'OK')?.atr14;
+      aiDown = why;
+      return engineSkeleton({ eng, pairId: pair.id, price: Number(mt4ContextUsed.feedPrice), dec: pair.dec, bias, atr: { h1: a1, h4: a4 }, zones, mult: eng.mult, reason: why });
+    };
+    let engineOnly = null;
+    if (!used) engineOnly = engineOnlyText(`Gemini tidak merespons: ${log.slice(-1)[0] || 'semua percobaan gagal'}`);
+    if (engineOnly) used = { model: 'engine-only' };
     if (!used) {
       const status = res?.status || 504;
       let msg = json?.error?.message || (res ? `HTTP ${status}` : 'Waktu habis menunggu Gemini.');
@@ -564,7 +601,7 @@ export async function POST(req) {
     }
 
     const candidate = json?.candidates?.[0];
-    const text = two
+    let text = engineOnly ? engineOnly : two
       ? fixInlineTables(two.text)
       : fixInlineTables(
           (candidate?.content?.parts || [])
@@ -576,7 +613,11 @@ export async function POST(req) {
 
     // Model gateway kadang membalas sembarang teks (mis. kutipan/basa-basi). Tolak bila format analisa wajib tidak ada,
     // agar tidak diubah validator menjadi "NO TRADE" palsu.
-    if (two && text) {
+    if (two && text && !engineOnly && !looksLikeAnalysis(text)) {
+      const eo = engineOnlyText(`Model ${two.model} tidak menghasilkan format analisa`);
+      if (eo) { text = eo; used = { model: 'engine-only' }; engineOnly = eo; }
+    }
+    if (two && text && !engineOnly) {
       if (!looksLikeAnalysis(text)) {
         return NextResponse.json({
           error: `Model ${two.model} tidak menghasilkan format analisa yang wajib (tanpa BIAS UTAMA/tabel). Cuplikan balasan: "${text.replace(/\s+/g, ' ').slice(0, 120)}". ${gwDiag ? ' ' + gwDiag + '.' : ''} Coba model lain atau pilih mesin Gemini di Pengaturan.`,
@@ -586,6 +627,10 @@ export async function POST(req) {
       }
     }
 
+    if (!text && !engineOnly) {
+      const eo = engineOnlyText('Respons kosong dari model');
+      if (eo) { text = eo; used = { model: 'engine-only' }; engineOnly = eo; }
+    }
     if (!text) {
       const reason =
         json?.promptFeedback?.blockReason || candidate?.finishReason || 'Respons kosong dari model.';
@@ -626,17 +671,31 @@ export async function POST(req) {
       const z1Off = disableZoneRows(wkFix.markdown, zonesOff);
       const rawTxt = z1Off.markdown;
       let txt = rawTxt;
+      // Order dari mesin: Entry/SL/TP1/TP2/zona terisi/lot awal ditetapkan server; tulisan model pada angka order ditimpa.
+      let eng = null, lockNotes = [], lockOverrides = 0;
+      if (pairCfg && smcAnalyses?.length) {
+        eng = computeEngine(pairCfg);
+        if (eng) {
+          try {
+            const lk = lockToEngine(rawTxt, eng, { dec: pairCfg.dec, zones, now: new Date(), fmtExp: (ts) => `${fmtMt4(ts, 7)} WIB`, lotStr: eng.lotStr, parseExp: parseExpiryWIB });
+            txt = clearDeadDetail(lk.markdown, eng);
+            lockNotes = lk.notes; lockOverrides = lk.overrides.length;
+          } catch (err) { console.error('[analyze] engine lock error:', err); eng = null; }
+        }
+      }
+      const txt0 = txt;
       // Bias final ditentukan SATU kali dari teks asli model + struktur mesin; dipakai header, label arah, keputusan server, 4B.
       const biasInfo = decideBias({ modelHeadline: extractBias(rawTxt), engineBias: mt4ContextUsed?.smc?.higherBias, structureTf: structureTfOf(mt4ContextUsed?.smc?.analyses) });
       let smcNotes = [];
       if (pairCfg && smcAnalyses?.length) {
         try {
           const feedPx = Number(mt4ContextUsed.feedPrice || 0);
-          const e = enforceSmcZones(rawTxt, { analyses: smcAnalyses, atrH1: smcAnalyses.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14 || 0, price: feedPx || parseLastPrice(rawTxt, pairCfg) || 0, priceRe: pairCfg.priceRe, candidates: mt4ContextUsed.zoneRes || null });
+          const e = enforceSmcZones(txt0, { analyses: smcAnalyses, atrH1: smcAnalyses.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14 || 0, price: feedPx || parseLastPrice(rawTxt, pairCfg) || 0, priceRe: pairCfg.priceRe, candidates: mt4ContextUsed.zoneRes || null });
           txt = e.markdown;
           smcNotes = e.notes;
           const atrH1v = smcAnalyses.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14 || 0;
-          const tpFix = syncTargets(txt, { analyses: smcAnalyses, atrH1: atrH1v, price: feedPx || parseLastPrice(rawTxt, pairCfg) || 0, priceRe: pairCfg.priceRe });
+          // Dengan mesin order, TP1/TP2 sudah dari level struktur; syncTargets (yang punya fallback kelipatan R) TIDAK dijalankan.
+          const tpFix = eng ? { markdown: txt, notes: [] } : syncTargets(txt, { analyses: smcAnalyses, atrH1: atrH1v, price: feedPx || parseLastPrice(rawTxt, pairCfg) || 0, priceRe: pairCfg.priceRe });
           txt = tpFix.markdown;
           smcNotes = [...smcNotes, ...tpFix.notes];
           // Konsistensi narasi vs mesin: bias, label arah, bias TF, nama Level Kunci, Waktu Berakhir (server menang atas Gemini)
@@ -722,9 +781,10 @@ export async function POST(req) {
       if (wkFix.notes.length) smcNotes = [...smcNotes, `🗓️ ${wkFix.notes[0]}`];
       if (dcFix.notes.length) smcNotes = [...smcNotes, `🕓 ${dcFix.notes[0]}${dcFix.notes.length > 1 ? ` (+${dcFix.notes.length - 1} baris)` : ''}.`];
       if (smcNotes.length) g = { ...g, notes: [...smcNotes, ...(g.notes || [])] };
-      return { checked: c, markdown: md, guard: g, fixes, last, atr, dead, biasInfo };
+      if (lockNotes.length) g = { ...g, notes: [...lockNotes, ...(g.notes || [])] };
+      return { checked: c, markdown: md, guard: g, fixes, last, atr, dead, biasInfo, eng, lockOverrides };
     };
-    let { checked, markdown, guard, fixes, last: lastPx, atr: atrUsed, dead: deadZones, biasInfo } = runChecks(text);
+    let { checked, markdown, guard, fixes, last: lastPx, atr: atrUsed, dead: deadZones, biasInfo, eng: engUsed, lockOverrides } = runChecks(text);
     let finalText = text;
     let retried = false;
 
@@ -770,7 +830,7 @@ export async function POST(req) {
           const r2 = runChecks(t2);
           // pakai hasil ulang hanya jika lebih baik (lebih sedikit pelanggaran)
           if (r2.fixes.length < fixes.length) {
-            ({ checked, markdown, guard, fixes, last: lastPx, atr: atrUsed, dead: deadZones, biasInfo } = r2);
+            ({ checked, markdown, guard, fixes, last: lastPx, atr: atrUsed, dead: deadZones, biasInfo, eng: engUsed, lockOverrides } = r2);
             finalText = t2;
           }
         }
@@ -830,6 +890,7 @@ export async function POST(req) {
     // Reviewer OpenAI sengaja tidak dijalankan pada jalur live V2: menjaga batas waktu dan fokus pada validator deterministik.
 
     const notices = [];
+    if (aiDown) notices.push(`⚠️ NARASI AI TIDAK TERSEDIA — TABEL MESIN TETAP DITAMPILKAN. (${aiDown}) Ini bukan konfirmasi bahwa setup sudah aktif; ikuti Keputusan Server dan tunggu konfirmasi candle.`);
     if (htfNote) notices.push(htfNote);
     { const qt = mt4ContextUsed?.quote; if (qt) notices.push(`💱 Harga acuan zona: Bid ${qt.bid}${qt.ask ? ` / Ask ${qt.ask} (spread ${Number(qt.spread.toFixed(5))})` : ''}${qt.atWib ? `, kuotasi EA ${qt.atWib} WIB` : ''}. Struktur SMC dari candle tertutup (close ${qt.closeTf} ${qt.closeRef}).`); }
     if ((mt4Status === 'OHLC_HYBRID' || mt4Status === 'OHLC_ONLY') && mt4Report?.analyses?.length) {
@@ -890,7 +951,7 @@ export async function POST(req) {
     let audit = null;
     try {
       const cfg = buildConfig({ balance, risk, riskUsd, zones, zonesOff, capPerDirection, strict, mode: body.mode, modeEffective: wantTwoStage ? '2stage' : 'single', engine: engineGw ? 'gateway' : 'gemini', geminiModel, gwModel, marketSource, pairChoice, connectionId, copyFmt: body.copyFmt });
-      audit = buildAudit({ config: cfg, ctx: mt4ContextUsed, usedModel: used?.model || '', requestedModel: engineGw ? gwModel : geminiModel, bias: biasInfo, decision });
+      audit = buildAudit({ config: cfg, ctx: mt4ContextUsed, usedModel: used?.model || '', requestedModel: engineGw ? gwModel : geminiModel, bias: biasInfo, decision, orders: { v: ENGINE_ORDERS_VERSION, sig: engUsed ? ordersSignature(engUsed.orders) : null, finalSig: engUsed ? finalTableSignature(markdown) : null, overrides: lockOverrides || 0, aiAvailable: !aiDown } });
       notices.push(auditLine(audit));
     } catch (e) { console.error('[analyze] audit error:', e); }
     if (notices.length > 2) {
