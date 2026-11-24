@@ -1,18 +1,19 @@
 //+------------------------------------------------------------------+
-//| AureusDesk_MarketBridge.mq4  v3.1 (Headway / XAUUSD production)   |
+//| AureusDesk_MarketBridge.mq4  v3.2 (Universal Broker, MT4)         |
 //| Mengirim OHLC candle TERTUTUP dari server broker ke AureusDesk AI.|
 //| TIDAK ADA fungsi trading: tanpa OrderSend/OrderClose/OrderModify. |
 //+------------------------------------------------------------------+
 #property strict
-#property version     "3.10"
+#property version     "3.20"
 #property description "AureusDesk AI: pengirim OHLC candle tertutup (read-only). Tidak membuka/menutup transaksi."
 
 //--- koneksi
 input string ApiBaseUrl          = "https://aureusdesk-ai.vercel.app"; // domain production AureusDesk
 input string BridgeSecret        = "PASTE_MT4_BRIDGE_SECRET_HERE";     // harus sama dengan MT4_BRIDGE_SECRET di Vercel
 //--- simbol
-input string SymbolOverride      = "";      // kosong = simbol chart tempat EA dipasang (Headway: XAUUSD)
-input string RequireSymbolContains = "XAU"; // pengaman: EA menolak jalan di simbol lain. Kosongkan untuk menonaktifkan
+input string SymbolOverride      = "";      // kosong = simbol chart tempat EA dipasang (mis. XAUUSD, XAUUSDm, EURUSD.pro, USTEC)
+input string RequireSymbolContains = "";    // opsional pengaman: bila diisi, EA hanya jalan di simbol yang mengandung teks ini. Default kosong (semua instrumen)
+input string ConnectionSalt      = "";      // opsional: teks rahasia tambahan untuk ID koneksi (agar ID tidak bisa ditebak dari nomor akun)
 //--- data
 input int    BarsToSend          = 180;     // 30..500
 input int    SendEverySeconds    = 60;      // interval pengecekan (detik, min 10)
@@ -278,7 +279,7 @@ bool SendTf(int i)
 
    string payload = "{\"symbol\":\"" + EscapeJson(g_sym) + "\",\"timeframe\":\"" + g_names[i] + "\""
                   + ",\"bid\":" + DoubleToString(bid, digits) + ",\"ask\":" + DoubleToString(ask, digits)
-                  + ",\"digits\":" + IntegerToString(digits) + ",\"bars\":" + bars + "}";
+                  + ",\"digits\":" + IntegerToString(digits) + ",\"conn\":" + ConnJson() + ",\"spec\":" + SpecJson() + ",\"bars\":" + bars + "}";
 
    string pErr = PayloadCheck(i, payload, off, digits);
    if(pErr != "")
@@ -322,6 +323,48 @@ void SendAll()
    ShowStatus();
 }
 
+//--- Universal Broker: identitas koneksi aman + spesifikasi kontrak (hanya MarketInfo/Account info; TIDAK pernah mengirim password)
+string Hash64(string t)
+{
+   uint h1 = 5381, h2 = 52711;
+   for(int k = 0; k < StringLen(t); k++)
+   {
+      uint ch = (uint)StringGetChar(t, k);
+      h1 = h1 * 33 + ch;
+      h2 = (h2 * 31) ^ (ch + (uint)k);
+   }
+   return StringFormat("%08x%08x", h1, h2);
+}
+string ConnJson();
+string SpecJson();
+string g_connJson = "";
+string ConnJson()
+{
+   if(g_connJson != "") return g_connJson;
+   string acc = IntegerToString(AccountNumber());
+   string mask = (StringLen(acc) > 4) ? "****" + StringSubstr(acc, StringLen(acc) - 4) : "****";
+   string id = Hash64(AccountCompany() + "|" + AccountServer() + "|" + acc + "|" + ConnectionSalt) + Hash64(ConnectionSalt + "#" + acc + "#" + AccountServer());
+   g_connJson = "{\"id\":\"" + id + "\",\"broker\":\"" + EscapeJson(AccountCompany()) + "\",\"server\":\"" + EscapeJson(AccountServer())
+              + "\",\"ccy\":\"" + EscapeJson(AccountCurrency()) + "\",\"platform\":\"MT4\",\"mask\":\"" + mask + "\"}";
+   return g_connJson;
+}
+string SpecJson()
+{
+   int dg = (int)MarketInfo(g_sym, MODE_DIGITS);
+   return "{\"lotsize\":" + DoubleToString(MarketInfo(g_sym, MODE_LOTSIZE), 2)
+        + ",\"tickvalue\":" + DoubleToString(MarketInfo(g_sym, MODE_TICKVALUE), 8)
+        + ",\"ticksize\":" + DoubleToString(MarketInfo(g_sym, MODE_TICKSIZE), 8)
+        + ",\"digits\":" + IntegerToString(dg)
+        + ",\"point\":" + DoubleToString(MarketInfo(g_sym, MODE_POINT), 8)
+        + ",\"minlot\":" + DoubleToString(MarketInfo(g_sym, MODE_MINLOT), 4)
+        + ",\"maxlot\":" + DoubleToString(MarketInfo(g_sym, MODE_MAXLOT), 2)
+        + ",\"lotstep\":" + DoubleToString(MarketInfo(g_sym, MODE_LOTSTEP), 4)
+        + ",\"stoplevel\":" + DoubleToString(MarketInfo(g_sym, MODE_STOPLEVEL), 0)
+        + ",\"freezelevel\":" + DoubleToString(MarketInfo(g_sym, MODE_FREEZELEVEL), 0)
+        + ",\"spread\":" + DoubleToString(MarketInfo(g_sym, MODE_SPREAD), 0)
+        + ",\"accountCurrency\":\"" + EscapeJson(AccountCurrency()) + "\"}";
+}
+
 int OnInit()
 {
    if(StringFind(ApiBaseUrl, "https://") != 0)
@@ -343,7 +386,7 @@ int OnInit()
       StringToUpper(need);
       if(StringFind(up, need) < 0)
       {
-         Alert("AureusDesk: simbol '", g_sym, "' tidak mengandung '", RequireSymbolContains, "'. Pasang EA di chart XAUUSD Headway.");
+         Alert("AureusDesk: simbol '", g_sym, "' tidak mengandung '", RequireSymbolContains, "'. Pasang EA di chart instrumen yang sesuai.");
          return INIT_PARAMETERS_INCORRECT;
       }
    }

@@ -10,7 +10,8 @@ import { verifyRiskTables, fixDailyClose } from '@/lib/riskCheck';
 import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
 import { buildDecision, insertDecision, insufficientDecision, dataGap } from '@/lib/decision';
 import { resolveBias, syncHeadlineBias, syncBiasLabels, syncTfBias, syncLevelLabels, syncSummaryLevels, syncExpiry } from '@/lib/consistency';
-import { getMarketSnapshots, marketContext, mt4SymbolForPair } from '@/lib/mt4Market';
+import { getConnectionSnapshots, marketContext, mt4SymbolForPair } from '@/lib/mt4Market';
+import { specPromptBlock, specNotice } from '@/lib/brokerSpec';
 import { getCloudMarketSnapshots, cloudMarketContext, cloudProxyOf, applyBasis } from '@/lib/cloudMarket';
 import { metalsWeekendClosed, fmtMt4 } from '@/lib/marketTime';
 import { buildSmcReport, buildZoneCandidates, buildZoneCandidates3 } from '@/lib/smc/engine';
@@ -50,8 +51,15 @@ async function loadMt4Context(pairId, zones = 2, opts = {}) {
   if (!pairId || !process.env.SUPABASE_SERVICE_ROLE_KEY) return { text: '', snapshots: [], smc: null, source: 'NONE' };
   try {
     const symbol = mt4SymbolForPair(pairId);
-    const snapshots = await getMarketSnapshots(symbol);
+    const conn = await getConnectionSnapshots(pairId, { connectionId: opts.connectionId || null, legacySymbol: symbol });
+    if (conn.missing) throw new Error(`Koneksi broker "${opts.connectionId}" tidak punya data fresh untuk ${pairId}.`);
+    const snapshots = conn.chosen?.rows || [];
     if (!snapshots.length) throw new Error('Feed MT4 belum tersedia/fresh.');
+    const connInfo = { id: conn.chosen.connectionId, broker: conn.chosen.broker, server: conn.chosen.server, platform: conn.chosen.platform, accountCurrency: conn.chosen.accountCurrency, brokerSymbol: conn.chosen.symbol, others: conn.others.map((o) => ({ id: o.connectionId, broker: o.broker, server: o.server })) };
+    const brokerSpec = conn.chosen.spec && conn.chosen.spec.valid ? conn.chosen.spec : null;
+    const specWhy = brokerSpec ? null : conn.chosen.spec ? `spesifikasi tidak lengkap: ${[...(conn.chosen.spec.missing || []), ...(conn.chosen.spec.problems || [])].join(', ') || 'tidak valid'}` : conn.chosen.connectionId === 'legacy' ? 'EA lama (v3.1) tidak mengirim spesifikasi — update ke v3.2' : 'EA tidak mengirim spesifikasi kontrak';
+    const connNotice = [`🔌 Data dari ${connInfo.broker || 'broker'}${connInfo.server ? ' / ' + connInfo.server : ''} (simbol ${connInfo.brokerSymbol}${connInfo.id === 'legacy' ? ', koneksi lama' : ''}).`,
+      connInfo.others.length ? `Ada ${connInfo.others.length} koneksi broker lain aktif untuk ${pairId}; data TIDAK dicampur.` : null].filter(Boolean).join(' ');
     const quoteSnap = snapshots.find((x) => x.timeframe === 'M5') || snapshots.find((x) => x.timeframe === 'M15');
     const quotePrice = Number(quoteSnap?.bid || quoteSnap?.ask || quoteSnap?.bars?.at(-1)?.close || 0);
     const profile = PAIRS[pairId] || resolvePair(pairId);
@@ -64,7 +72,7 @@ async function loadMt4Context(pairId, zones = 2, opts = {}) {
     const feed = feedPriceInfo(snapshots);
     const zcd = zoneCandidateData(smc, profile, feed.price || quotePrice, zones, opts.zonesOff || []);
     const zc = zcd.text;
-    return { text: marketContext(snapshots) + report + feed.line + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, zoneRes: zcd.res, feedPrice: feed.price, quote: feed.quote, snapshots, smc, source: 'MT4_EA', warnings: [] };
+    return { text: marketContext(snapshots) + specPromptBlock(brokerSpec, specWhy) + report + feed.line + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, zoneRes: zcd.res, feedPrice: feed.price, quote: feed.quote, snapshots, smc, source: 'MT4_EA', warnings: [], connection: connInfo, brokerSpec, specWhy, connNotice, specNotice: specNotice(brokerSpec, specWhy) };
   } catch (e) {
     return { text: `DATA OHLC MT4 tidak dapat diverifikasi (${e.message}).`, snapshots: [], smc: null, source: 'NONE', error: e.message };
   }
@@ -257,6 +265,7 @@ export async function POST(req) {
     const session = wibHour >= 6 && wibHour < 14 ? 'Sesi Asia' : wibHour >= 14 && wibHour < 19 ? 'Sesi Eropa' : 'Sesi New York';
     const sessionUi = String(body.session || '').trim();
     const pairChoice = PAIR_ID_OK(body.pair) ? body.pair : 'AUTO';
+    const connectionId = typeof body.connectionId === 'string' ? (body.connectionId.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 48) || null) : null;
     const fixedPair = pairChoice === 'AUTO' ? null : PAIRS[pairChoice];
     const strict = body.strict !== false; // Validator Zona & Konflik Order (Pengaturan), default ON
     const zones = body.zoneStyle === 'three' ? 3 : 2;
@@ -349,7 +358,7 @@ export async function POST(req) {
     }
     const sane = (px, p) => (px > 0 && (!p?.priceRange || (px >= p.priceRange[0] && px <= p.priceRange[1])) ? px : 0);
     chartPrice = sane(chartPrice, resolvedPair);
-    const marketInitial = resolvedPair ? await loadMarketContext(resolvedPair.id, marketSource, zones, { brokerPrice: chartPrice, zonesOff }) : { text: '', snapshots: [], smc: null, source: 'NONE' };
+    const marketInitial = resolvedPair ? await loadMarketContext(resolvedPair.id, marketSource, zones, { brokerPrice: chartPrice, zonesOff, connectionId }) : { text: '', snapshots: [], smc: null, source: 'NONE' };
     let mt4ContextUsed = marketInitial;
     if (noShot && !(marketInitial.snapshots?.length)) {
       return NextResponse.json({
@@ -469,7 +478,7 @@ export async function POST(req) {
           if (!data) throw new Error('ekstraksi gagal');
           const p2 = fixedPair || resolvedPair || resolvePair(data.pair) || (data.lastPrice ? guessPairByPrice(data.lastPrice) : null);
           const built = buildCandidates(data, p2);
-          const mt4Two = await loadMarketContext((fixedPair || p2)?.id, marketSource, zones, { brokerPrice: Number(data.lastPrice) || chartPrice, zonesOff });
+          const mt4Two = await loadMarketContext((fixedPair || p2)?.id, marketSource, zones, { brokerPrice: Number(data.lastPrice) || chartPrice, zonesOff, connectionId });
           twoSystem = buildSystemInstruction(fixedPair || resolvedPair || p2, strict) + (zones === 3 ? zoneStyleAddendum(fixedPair || resolvedPair || p2) + (zonesOff.length ? ZONE1_OFF_SYSTEM : '') : '') + '\n' + STAGE2_ADDENDUM + (mt4Two.snapshots?.length ? SMC_SYSTEM_ADDENDUM : '');
           if (mt4Two.snapshots?.length) mt4ContextUsed = mt4Two;
           twoUser =
@@ -629,7 +638,7 @@ export async function POST(req) {
       const last = pairCfg ? parseLastPrice(txt, pairCfg) : null;
       const atr = pairCfg && last ? (marketAtr || parseATR(txt, pairCfg, last)) : null;
       const c = pairCfg
-        ? verifyRiskTables(txt, riskUsd, pairCfg, new Date(), { last, capPerDirection, zones })
+        ? verifyRiskTables(txt, riskUsd, pairCfg, new Date(), { last, capPerDirection, zones, spec: mt4ContextUsed?.brokerSpec || null, requireSpec: true, specWhy: mt4ContextUsed?.brokerSpec ? null : (mt4ContextUsed?.specWhy || 'sumber data bukan EA MT4 v3.2') })
         : { markdown: txt, notes: [], fixes: [], tablesChecked: 0 };
       let md = c.markdown;
       let g = { notes: [], flags: { cancel: [], shift: [], fix: [] }, skipped: null, atr };
@@ -760,6 +769,8 @@ export async function POST(req) {
     else notices.push(`🧭 Gaya zona: ${zones === 3 ? (zonesOff.length ? '3 zona, Zona 1 (Scalping) MATI → hanya Zona 2 Intraday + Zona 3 Swing' : '3 zona (Scalping/Intraday/Swing)') : '2 zona (Intraday/Swing) — ubah di Pengaturan → Gaya Zona'}.`);
     if (sessionUi && sessionUi !== session) notices.push(`🕒 Sesi dihitung dari jam server WIB (${session}); isian Sesi di UI (${sessionUi}) diabaikan.`);
     if (mt4ContextUsed?.proxyNote) notices.push(mt4ContextUsed.proxyNote);
+    if (mt4ContextUsed?.connNotice) notices.push(mt4ContextUsed.connNotice);
+    if (mt4ContextUsed?.specNotice) notices.push(mt4ContextUsed.specNotice);
     { const sc = Object.entries(mt4ContextUsed?.scrub || {}); if (sc.length) notices.push(`🧹 Feed data: candle outlier dibersihkan sebelum SMC/ATR (${sc.map(([k, v]) => `${k}: ${v.dropped ? v.dropped + ' dibuang' : ''}${v.dropped && v.clamped ? ', ' : ''}${v.clamped ? v.clamped + ' wick dipotong' : ''}`).join('; ')}).`); }
     if (weekendMap && !pairCfg?.open24x7) notices.push(`🗓️ Pasar ${(resolvedPair || fixedPair)?.id || pairCfg?.id || 'forex/emas'} sedang tutup akhir pekan: ini MAPPING untuk pembukaan ${fmtMt4(nextOpenMs(pairCfg || resolvedPair || fixedPair, Date.now()), 7)} WIB. Harga Terakhir = close Jumat; cek gap pembukaan sebelum memasang order.`);
     if (idNumNote) notices.push(idNumNote);

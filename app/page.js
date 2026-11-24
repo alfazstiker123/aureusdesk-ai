@@ -44,6 +44,7 @@ const LS = {
   marketSource: 'aureus_market_source',
   zoneStyle: 'aureus_zone_style',
   skipZone1: 'aureus_skip_zone1',
+  connectionId: 'aureus_mt4_conn',
 };
 
 // Format digit tombol salin harga. 'ASLI' = apa adanya dari hasil analisa (bawaan).
@@ -127,6 +128,9 @@ export default function Home() {
   const [skipZone1, setSkipZone1] = useState(false); // Zona 1 (Scalping) mati; hanya berlaku di mode 3 zona
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [connectionId, setConnectionId] = useState(''); // '' = otomatis (koneksi broker terbaru)
+  const [connList, setConnList] = useState(null); // daftar koneksi broker aktif untuk pair terpilih
+
 
   // Kunci PIN: 'checking' | 'locked' | 'open'
   const [auth, setAuth] = useState('checking');
@@ -188,6 +192,7 @@ export default function Home() {
       if (localStorage.getItem(LS.mode) === '2stage') setMode('2stage');
       if (localStorage.getItem(LS.zoneStyle) === 'three') setZoneStyle('three');
       if (localStorage.getItem(LS.skipZone1) === '1') setSkipZone1(true);
+      { const c = localStorage.getItem(LS.connectionId); if (c && /^[a-z0-9]{8,48}$/.test(c)) setConnectionId(c); }
       const ms = localStorage.getItem(LS.marketSource);
       if (ms && ['cloud', 'mt4', 'auto', 'screenshot'].includes(ms)) setMarketSource(ms);
       const gm = localStorage.getItem(LS.gwModel);
@@ -540,7 +545,7 @@ export default function Home() {
           'Content-Type': 'application/json',
           ...(apiKey.trim() ? { 'x-gemini-key': apiKey.trim() } : {}),
         },
-        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict, mode, gwModel, engine, geminiModel, marketSource, zoneStyle, skipZone1: zoneStyle === 'three' && skipZone1 }),
+        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict, mode, gwModel, engine, geminiModel, marketSource, zoneStyle, skipZone1: zoneStyle === 'three' && skipZone1, connectionId: connectionId || undefined }),
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || 'Gagal menganalisa.');
@@ -1018,6 +1023,19 @@ export default function Home() {
       </main>
 
       <SettingsSheet
+        connectionId={connectionId}
+        connList={connList}
+        onLoadConnections={async () => {
+          try {
+            const r = await apiFetch(`/api/mt4/status?pair=${encodeURIComponent(pair === 'AUTO' ? 'XAUUSD' : pair)}`);
+            const j = await r.json();
+            setConnList(Array.isArray(j.connections) ? j.connections : []);
+          } catch { setConnList([]); }
+        }}
+        onConnectionId={(v) => {
+          setConnectionId(v);
+          persist(LS.connectionId, v);
+        }}
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         theme={theme}

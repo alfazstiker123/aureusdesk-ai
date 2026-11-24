@@ -61,7 +61,7 @@ test('wiring: toggle hanya di mode 3 zona, dikirim ke server, prompt & validator
   assert.match(route, /zones === 3 && body\.skipZone1 === true \? \[1\] : \[\]/);
   assert.equal((route.match(/zonesOff\.length \? ZONE1_OFF_SYSTEM/g) || []).length, 3);
   assert.match(route, /disableZoneRows\(wkFix\.markdown, zonesOff\)/);
-  assert.match(route, /zonesOff \}\)/);
+  assert.match(route, /zonesOff(, connectionId)? \}\)/);
   const page = fs.readFileSync(new URL('../app/page.js', import.meta.url), 'utf8');
   assert.match(page, /skipZone1: zoneStyle === 'three' && skipZone1/);
   const set = fs.readFileSync(new URL('../components/SettingsSheet.js', import.meta.url), 'utf8');
@@ -83,7 +83,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const tmpR = fs.mkdtempSync(path.join(os.tmpdir(), 'rr3-'));
-for (const f of ['riskCheck.js', 'pairs.js', 'marketTime.js', 'weekendExpiry.js', 'numFormat.js']) {
+for (const f of ['riskCheck.js', 'brokerSpec.js', 'pairs.js', 'marketTime.js', 'weekendExpiry.js', 'numFormat.js']) {
   if (fs.existsSync(new URL(`../lib/${f}`, import.meta.url))) fs.writeFileSync(path.join(tmpR, f), fs.readFileSync(new URL(`../lib/${f}`, import.meta.url), 'utf8').replace(/'@\/lib\/([\w]+)'/g, "'./$1.js'"));
 }
 const { verifyRiskTables: vrt } = await import(pathToFileURL(path.join(tmpR, 'riskCheck.js')).href);

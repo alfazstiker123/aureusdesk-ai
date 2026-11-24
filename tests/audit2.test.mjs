@@ -96,6 +96,10 @@ test('harga acuan jarak zona = Bid terbaru (bukan close M5), spread & timestamp 
 // ---------- Poin 5: toleransi PRICE MISMATCH adaptif ----------
 const d = fs.mkdtempSync(path.join(os.tmpdir(), 'a2m-'));
 fs.cpSync('lib/mt4Market.js', path.join(d, 'mt4Market.js'));
+fs.cpSync('lib/instruments.js', path.join(d, 'instruments.js'));
+fs.cpSync('lib/brokerSpec.js', path.join(d, 'brokerSpec.js'));
+fs.cpSync('lib/pairs.js', path.join(d, 'pairs.js'));
+fs.cpSync('lib/marketTime.js', path.join(d, 'marketTime.js'));
 fs.cpSync('lib/marketTime.js', path.join(d, 'marketTime.js'));
 const { validateMarketPayload, bidCloseTolerance } = await import(pathToFileURL(path.join(d, 'mt4Market.js')).href);
 const OPEN = Date.UTC(2026, 5, 2, 10, 5);

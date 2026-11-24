@@ -5,7 +5,7 @@ import { THEMES } from '@/lib/themes';
 import { NAV_MODES } from '@/lib/sections';
 
 // Panel Pengaturan: bottom-sheet di HP, dialog di tablet/desktop. Berisi Tema & API Key.
-export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, engine = 'gemini', onEngine, geminiModel = '', onGeminiModel, onTestGateway, onLoadModels, marketSource = 'cloud', onMarketSource, zoneStyle = 'two', onZoneStyle, skipZone1 = false, onSkipZone1 }) {
+export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, engine = 'gemini', onEngine, geminiModel = '', onGeminiModel, onTestGateway, onLoadModels, marketSource = 'cloud', onMarketSource, zoneStyle = 'two', onZoneStyle, skipZone1 = false, onSkipZone1, connectionId = '', onConnectionId, connList = null, onLoadConnections }) {
   const [showKey, setShowKey] = useState(false);
   const panelRef = useRef(null);
 
@@ -193,6 +193,28 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
               <span className={`ml-3 flex-none rounded-full px-2 py-0.5 text-[10px] font-bold ${skipZone1 ? 'bg-down/15 text-down' : 'bg-up/15 text-up'}`}>{skipZone1 ? 'OFF' : 'ON'}</span>
             </button>
           )}
+        </section>
+
+        <section className="mb-5">
+          <h3 className="field-label">Koneksi Broker MT4</h3>
+          <p className="mb-2 text-[10px] leading-snug text-muted">Data tiap broker disimpan terpisah (tidak dicampur). Otomatis = koneksi dengan kiriman EA terbaru untuk pair terpilih.</p>
+          <div className="flex gap-2">
+            <select
+              value={connectionId}
+              onChange={(e) => onConnectionId && onConnectionId(e.target.value)}
+              className="min-w-0 flex-1 rounded-xl border border-line bg-panel2 px-3 py-2 text-xs"
+            >
+              <option value="">Otomatis (terbaru)</option>
+              {connectionId && !(connList || []).some((c) => c.connectionId === connectionId) && <option value={connectionId}>{connectionId.slice(0, 8)}… (tersimpan)</option>}
+              {(connList || []).map((c) => (
+                <option key={c.connectionId} value={c.connectionId}>
+                  {(c.broker || 'Broker lama')} {c.server ? `· ${c.server}` : ''} · {c.symbol}{c.spec ? (c.spec.valid ? ' · spek ✓' : ' · spek ⚠') : ' · tanpa spek'}
+                </option>
+              ))}
+            </select>
+            <button type="button" onClick={() => onLoadConnections && onLoadConnections()} className="flex-none rounded-xl border border-line bg-panel2 px-3 py-2 text-xs font-semibold">Muat</button>
+          </div>
+          {connList && connList.length === 0 && <p className="mt-1 text-[10px] text-down">Belum ada data EA yang fresh untuk pair ini.</p>}
         </section>
 
         <section className="mb-5">

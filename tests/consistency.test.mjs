@@ -8,7 +8,7 @@ import { resolveBias, syncHeadlineBias, syncBiasLabels, syncTfBias, syncLevelLab
 
 // riskCheck.js memakai alias '@/lib/*'; salin ke folder sementara dengan path relatif agar bisa diuji tanpa bundler.
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rc-'));
-for (const f of ['riskCheck.js', 'pairs.js', 'marketTime.js']) {
+for (const f of ['riskCheck.js', 'brokerSpec.js', 'pairs.js', 'marketTime.js']) {
   fs.writeFileSync(path.join(tmp, f), fs.readFileSync(new URL(`../lib/${f}`, import.meta.url), 'utf8').replace(/'@\/lib\/([\w]+)'/g, "'./$1.js'"));
 }
 const { verifyRiskTables } = await import(pathToFileURL(path.join(tmp, 'riskCheck.js')).href);

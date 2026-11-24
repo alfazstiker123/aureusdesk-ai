@@ -15,6 +15,6 @@ export async function POST(req) {
     const raw=await req.text();
     if(raw.length>2_000_000) return NextResponse.json({error:"Payload terlalu besar."},{status:413});
     const snapshot=validateMarketPayload(JSON.parse(raw)); await storeMarketSnapshot(snapshot);
-    return NextResponse.json({ok:true,symbol:snapshot.symbol,timeframe:snapshot.timeframe,bars:snapshot.bars.length});
+    return NextResponse.json({ok:true,symbol:snapshot.symbol,timeframe:snapshot.timeframe,bars:snapshot.bars.length,connection:snapshot.connection_id,canonical:snapshot.canonical_symbol,spec:snapshot.spec?(snapshot.spec.valid?"VALID":"INCOMPLETE:"+[...(snapshot.spec.missing||[]),...(snapshot.spec.problems||[])].join(",")):"NONE"});
   } catch(e) { return NextResponse.json({error:e.message||"Payload ditolak."},{status:400}); }
 }

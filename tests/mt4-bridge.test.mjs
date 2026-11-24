@@ -7,6 +7,10 @@ import { pathToFileURL } from "node:url";
 
 const d = mkdtempSync(join(tmpdir(), "mt4-"));
 cpSync("lib/mt4Market.js", join(d, "mt4Market.js"));
+cpSync("lib/instruments.js", join(d, "instruments.js"));
+cpSync("lib/brokerSpec.js", join(d, "brokerSpec.js"));
+cpSync("lib/pairs.js", join(d, "pairs.js"));
+cpSync("lib/marketTime.js", join(d, "marketTime.js"));
 cpSync("lib/marketTime.js", join(d, "marketTime.js"));
 const { validateMarketPayload, summarizeSnapshots } = await import(pathToFileURL(join(d, "mt4Market.js")).href);
 

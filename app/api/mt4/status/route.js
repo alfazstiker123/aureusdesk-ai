@@ -8,8 +8,8 @@ export const dynamic = "force-dynamic";
 export async function GET(req) {
   const denied = requirePin(req);
   if (denied) return denied;
-  const pair = new URL(req.url).searchParams.get("pair") || "XAUUSD";
+  const pair = String(new URL(req.url).searchParams.get("pair") || "XAUUSD").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 16);
   const symbol = mt4SymbolForPair(pair);
-  const st = await marketStatus(symbol);
+  const st = await marketStatus(symbol, pair);
   return NextResponse.json({ symbol, cloudProxyDisabled: process.env.DISABLE_CLOUD_PROXY === "1", ...st });
 }

@@ -49,6 +49,10 @@ test('EA: payload memuat candle shift1 persis & tanpa shift0; tetap tanpa fungsi
 // Backend menerima format payload EA untuk D1/W1 (close sama antar candle bukan error) dan menolak candle yang timestamp-nya duplikat
 const d = fs.mkdtempSync(path.join(os.tmpdir(), 'eadiag-'));
 fs.cpSync('lib/mt4Market.js', path.join(d, 'mt4Market.js'));
+fs.cpSync('lib/instruments.js', path.join(d, 'instruments.js'));
+fs.cpSync('lib/brokerSpec.js', path.join(d, 'brokerSpec.js'));
+fs.cpSync('lib/pairs.js', path.join(d, 'pairs.js'));
+fs.cpSync('lib/marketTime.js', path.join(d, 'marketTime.js'));
 fs.cpSync('lib/marketTime.js', path.join(d, 'marketTime.js'));
 const { validateMarketPayload } = await import(pathToFileURL(path.join(d, 'mt4Market.js')).href);
 const NOW = Date.UTC(2026, 5, 3, 10, 30); // Rabu, pasar buka
