@@ -3,7 +3,7 @@
 EA ini READ-ONLY: tidak ada OrderSend/OrderClose/OrderModify, tidak mengirim password trading. Setelah mengganti file, WAJIB compile ulang (F7 di MetaEditor).
 
 ## Pasang (Headway / Exness / FBS / broker MT4 lain)
-1. Salin `AureusDesk_MarketBridge.mq4` ke `MQL4/Experts`, compile (F7), restart/refresh Navigator.
+1. Salin `AureusDesk_UniversalBridge_v3.2.mq4` ke `MQL4/Experts`, compile (F7), restart/refresh Navigator.
 2. Tools > Options > Expert Advisors > Allow WebRequest: tambahkan `https://aureusdesk-ai.vercel.app`.
 3. Pasang EA di chart instrumen yang ingin dianalisis. **Simbol default = simbol chart** (XAUUSD, XAUUSDm, EURUSD.pro, USTEC, dst). Tidak ada lagi default XAU.
 4. Isi `BridgeSecret` (sama dengan MT4_BRIDGE_SECRET di Vercel). Satu chart = satu instrumen; pasang di beberapa chart untuk beberapa instrumen.

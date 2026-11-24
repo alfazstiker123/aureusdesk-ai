@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const ea = fs.readFileSync(new URL('../mt4/AureusDesk_MarketBridge.mq4', import.meta.url), 'utf8');
+const ea = fs.readFileSync(new URL('../mt4/AureusDesk_UniversalBridge_v3.2.mq4', import.meta.url), 'utf8');
 const strip = ea.replace(/\/\/.*$/gm, ''); // tanpa komentar
 
 test('EA: log diagnostik SHIFT 0 dan SHIFT 1 memuat symbol, TF, shift, timestamp, OHLC', () => {

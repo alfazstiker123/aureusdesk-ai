@@ -1,11 +1,11 @@
 //+------------------------------------------------------------------+
-//| AureusDesk_MarketBridge.mq4  v3.2 (Universal Broker, MT4)         |
+//| AureusDesk_UniversalBridge_v3.2.mq4  v3.2 (Universal Broker, MT4)         |
 //| Mengirim OHLC candle TERTUTUP dari server broker ke AureusDesk AI.|
 //| TIDAK ADA fungsi trading: tanpa OrderSend/OrderClose/OrderModify. |
 //+------------------------------------------------------------------+
 #property strict
 #property version     "3.20"
-#property description "AureusDesk AI: pengirim OHLC candle tertutup (read-only). Tidak membuka/menutup transaksi."
+#property description "AureusDesk Universal Bridge v3.2 - pengirim OHLC candle tertutup (read-only). Tidak membuka/menutup transaksi."
 
 //--- koneksi
 input string ApiBaseUrl          = "https://aureusdesk-ai.vercel.app"; // domain production AureusDesk

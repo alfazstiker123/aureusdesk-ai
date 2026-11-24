@@ -163,7 +163,7 @@ test('forex cross tanpa spesifikasi: ditandai perkiraan', () => {
 });
 
 test('EA v3.2: tidak ada default XAU, kirim spesifikasi & koneksi, tetap read-only', () => {
-  const ea = fs.readFileSync('mt4/AureusDesk_MarketBridge.mq4', 'utf8');
+  const ea = fs.readFileSync('mt4/AureusDesk_UniversalBridge_v3.2.mq4', 'utf8');
   assert.match(ea, /RequireSymbolContains\s*=\s*""/);
   for (const k of ['MODE_LOTSIZE', 'MODE_TICKVALUE', 'MODE_TICKSIZE', 'MODE_DIGITS', 'MODE_POINT', 'MODE_MINLOT', 'MODE_MAXLOT', 'MODE_LOTSTEP', 'MODE_STOPLEVEL', 'MODE_FREEZELEVEL', 'MODE_SPREAD', 'AccountCompany', 'AccountServer', 'AccountCurrency'])
     assert.ok(ea.includes(k), k);

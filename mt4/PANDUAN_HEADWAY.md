@@ -9,7 +9,7 @@ EA hanya MENGIRIM OHLC candle tertutup. Tidak ada OrderSend/OrderClose/OrderModi
 4. Di app: Sumber Data = "MT4 EA".
 
 ## B. Pasang EA di MT4 Headway
-1. File > Open Data Folder > MQL4 > Experts: salin `AureusDesk_MarketBridge.mq4`.
+1. File > Open Data Folder > MQL4 > Experts: salin `AureusDesk_UniversalBridge_v3.2.mq4`.
 2. Buka MetaEditor (F4), buka file, tekan F7 (Compile). Harus 0 errors. Hasil: `.ex4`.
 3. MT4: Tools > Options > Expert Advisors > centang "Allow WebRequest for listed URL", tambah `https://aureusdesk-ai.vercel.app`. Aktifkan tombol Algo/AutoTrading hanya untuk EA ini (EA tidak trading).
 4. Pastikan XAUUSD ada di Market Watch (nama persis, mis. XAUUSD). Buka chart XAUUSD, drag EA ke chart.

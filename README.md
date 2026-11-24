@@ -145,7 +145,7 @@ npm run dev                  # buka http://localhost:3000
 Patch V2 ini bersifat **aditif**: seluruh alur screenshot, Gemini, mode 2 tahap, kalender, validasi risiko/order, riwayat, dashboard, dan fitur UI lama tetap dipertahankan. Bridge MT4 hanya mengirim data; **tidak pernah membuka/menutup order**.
 
 ### 9.1 Cara kerja
-1. EA `mt4/AureusDesk_MarketBridge.mq4` mengirim maksimal 180 candle **tertutup** untuk M5/M15/H1/H4/D1/W1 ke endpoint `/api/mt4/market-data`.
+1. EA `mt4/AureusDesk_UniversalBridge_v3.2.mq4` mengirim maksimal 180 candle **tertutup** untuk M5/M15/H1/H4/D1/W1 ke endpoint `/api/mt4/market-data`.
 2. Endpoint memeriksa secret, simbol, timeframe, integritas OHLC, jumlah candle, timestamp, lalu menyimpan snapshot terbaru per symbol/timeframe ke tabel `mt4_market_snapshots`.
 3. `/api/analyze` mengambil feed untuk pair manual, pair hasil ekstraksi AUTO, atau pair hasil ekstraksi mode 2 tahap; OHLC dan ringkasan struktur swing/BOS, CHoCH, liquidity sweep, OB, FVG menjadi bukti ke prompt Gemini. Screenshot tetap dipakai untuk konteks visual/indikator.
 4. Reviewer OpenAI tidak dijalankan pada jalur live V2 agar tidak menambah timeout; file reviewer lama tetap ada sebagai modul terpisah, tetapi tidak dipanggil.
@@ -173,7 +173,7 @@ Contoh mapping: `{ "XAUUSD": "XAUUSDm", "EURUSD": "EURUSD.a" }`. Nama harus sama
 
 ### 9.4 Instalasi EA MT4 desktop/VPS
 1. Buka MT4 → File → Open Data Folder → `MQL4/Experts`.
-2. Salin `mt4/AureusDesk_MarketBridge.mq4` ke folder tersebut.
+2. Salin `mt4/AureusDesk_UniversalBridge_v3.2.mq4` ke folder tersebut.
 3. Buka MetaEditor (F4), buka file EA, tekan Compile (F7). Pastikan tidak ada error.
 4. MT4 → Tools → Options → Expert Advisors → centang **Allow WebRequest for listed URL**. Tambahkan domain staging saja, misalnya `https://nama-project-staging.vercel.app` (tanpa path).
 5. Pasang EA pada chart simbol yang ingin dikirim; bila ingin mengirim beberapa pair, pasang EA pada masing-masing chart. Aktifkan AutoTrading bila MT4 memerlukannya untuk menjalankan EA. EA ini tidak berisi fungsi trading.

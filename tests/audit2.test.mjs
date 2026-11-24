@@ -127,7 +127,7 @@ test('toleransi melebar mengikuti ATR & spread, dibatasi 3%', () => {
   assert.ok(bidCloseTolerance({ bars: bars(OPEN, 300, 4000, 4000), bid: 4000, ask: 4000.4, timeframe: 'M5', ageMs: 6e8 }) <= 4000 * 0.03 + 1e-9);
 });
 test('EA: toleransi adaptif ATR/spread (tanpa 3% tetap)', () => {
-  const ea = fs.readFileSync(new URL('../mt4/AureusDesk_MarketBridge.mq4', import.meta.url), 'utf8');
+  const ea = fs.readFileSync(new URL('../mt4/AureusDesk_UniversalBridge_v3.2.mq4', import.meta.url), 'utf8');
   assert.match(ea, /double BidCloseTolerance\(/);
   assert.match(ea, /MathAbs\(bid - lastClose\) > tolPx/);
   assert.doesNotMatch(ea, /MathAbs\(bid - lastClose\) \/ lastClose \* 100\.0 > MaxBidCloseDiffPct/);
