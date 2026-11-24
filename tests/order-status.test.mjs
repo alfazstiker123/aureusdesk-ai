@@ -158,9 +158,9 @@ test('P1: semua angka BUY Zona 2 konsisten (tidak ada entry 3545.95 / koordinat 
 
 test('P1: total risiko dihitung ulang setelah pembatalan (hanya order aktif) di catatan verifikasi', () => {
   const r = run(LIVE);
-  const line = r.md.split('\n').find((l) => /Total risiko bila semua order baru terisi/.test(l));
-  assert.match(line, /BUY \$3\.95 \+ SELL \$24\.07 = \$28\.02 \(batas \$26\.00 per arah\)/);
-  assert.doesNotMatch(r.md, /\$41\.85|\$20\.49|\$44\.56/);
+  const line = r.md.split('\n').find((l) => /Total risiko per arah \(hanya order lolos validator\)/.test(l));
+  assert.match(line, /BUY \$3\.95 \| SELL \$24\.07 \(batas \$26\.00 per arah\)/);
+  assert.doesNotMatch(r.md, /\$41\.85|\$20\.49|\$44\.56|\$28\.02/);
   assert.ok(Math.abs(r.totals.BUY + r.totals.SELL - 28.02) < 0.011);
 });
 
