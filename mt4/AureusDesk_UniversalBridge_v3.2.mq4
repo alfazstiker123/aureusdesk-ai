@@ -428,7 +428,7 @@ int OnInit()
          else Print("AureusDesk DIAG INIT | ", g_names[k], ": CopyRates=", cc, " (buka chart TF ini sekali agar riwayat termuat)");
       }
    }
-   Print("AureusDesk bridge v3.1 aktif: ", g_sym, ", offset server ", g_offsetUsed / 3600, "j (", g_offsetMode, "), tanpa fungsi trading.");
+   Print("AureusDesk Universal Bridge v3.2 aktif: ", g_sym, ", offset server ", g_offsetUsed / 3600, "j (", g_offsetMode, "), tanpa fungsi trading.");
    ShowStatus();
    return INIT_SUCCEEDED;
 }
