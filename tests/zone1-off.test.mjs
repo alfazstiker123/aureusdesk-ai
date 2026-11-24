@@ -68,3 +68,12 @@ test('wiring: toggle hanya di mode 3 zona, dikirim ke server, prompt & validator
   assert.match(set, /zoneStyle === 'three' && \(/);
   assert.match(set, /Zona 1 \(Scalping\): \{skipZone1/);
 });
+
+test('Zona 1 OFF: porsi risiko 45/55 dan R:R Zona 2/3 disesuaikan di prompt', () => {
+  const pr = fs.readFileSync(new URL('../lib/prompt.js', import.meta.url), 'utf8');
+  const blk = pr.slice(pr.indexOf('ZONA 1 (SCALPING) DINONAKTIFKAN'), pr.indexOf('AKHIR ===`;'));
+  assert.match(blk, /45%.*55%/);
+  assert.match(blk, /20\/35\/45.*TIDAK berlaku/);
+  assert.match(blk, /Zona 2 \(Intraday\) minimal 1:1\.5.*TP2 sekitar 1:2\.5/);
+  assert.match(blk, /Zona 3 \(Swing\) minimal 1:2 ke TP1.*1:3\.5/);
+});
