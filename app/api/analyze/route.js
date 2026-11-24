@@ -23,6 +23,7 @@ import { getCloudMarketSnapshots, cloudMarketContext, cloudProxyOf, applyBasis }
 import { metalsWeekendClosed, fmtMt4 } from '@/lib/marketTime';
 import { buildSmcReport, buildZoneCandidates, buildZoneCandidates3 } from '@/lib/smc/engine';
 import { enforceSmcZones, syncTargets, disableZoneRows } from '@/lib/smc/guard';
+import { auditZoneLabels, ZONE_LABELS_VERSION } from '@/lib/zoneLabels';
 import { reconcileZones, cancelMismatched, syncNarrative, deadKeys, pruneNotes, finalizeOrders } from '@/lib/finalSync';
 import { normalizeIdNumbers } from '@/lib/numFormat';
 import { fixWeekendExpiry, nextOpenMs } from '@/lib/weekendExpiry';
@@ -669,14 +670,14 @@ export async function POST(req) {
       const rawTxt = z1Off.markdown;
       let txt = rawTxt;
       // Order dari mesin: Entry/SL/TP1/TP2/zona terisi/lot awal ditetapkan server; tulisan model pada angka order ditimpa.
-      let eng = null, lockNotes = [], lockOverrides = 0;
+      let eng = null, lockNotes = [], lockOverrides = 0, labelFixes = [];
       if (pairCfg && smcAnalyses?.length) {
         eng = computeEngine(pairCfg);
         if (eng) {
           try {
             const lk = lockToEngine(rawTxt, eng, { dec: pairCfg.dec, zones, now: new Date(), fmtExp: (ts) => `${fmtMt4(ts, 7)} WIB`, lotStr: eng.lotStr, parseExp: parseExpiryWIB });
             txt = clearDeadDetail(lk.markdown, eng);
-            lockNotes = lk.notes; lockOverrides = lk.overrides.length;
+            lockNotes = lk.notes; lockOverrides = lk.overrides.length; labelFixes = lk.labelFixes || [];
           } catch (err) { console.error('[analyze] engine lock error:', err); eng = null; }
         }
       }
@@ -779,9 +780,9 @@ export async function POST(req) {
       if (dcFix.notes.length) smcNotes = [...smcNotes, `🕓 ${dcFix.notes[0]}${dcFix.notes.length > 1 ? ` (+${dcFix.notes.length - 1} baris)` : ''}.`];
       if (smcNotes.length) g = { ...g, notes: [...smcNotes, ...(g.notes || [])] };
       if (lockNotes.length) g = { ...g, notes: [...lockNotes, ...(g.notes || [])] };
-      return { checked: c, markdown: md, guard: g, fixes, last, atr, dead, biasInfo, eng, lockOverrides };
+      return { checked: c, markdown: md, guard: g, fixes, last, atr, dead, biasInfo, eng, lockOverrides, labelFixes, modelLabelMismatch: auditZoneLabels(rawTxt, { zones }) };
     };
-    let { checked, markdown, guard, fixes, last: lastPx, atr: atrUsed, dead: deadZones, biasInfo, eng: engUsed, lockOverrides } = runChecks(text);
+    let { checked, markdown, guard, fixes, last: lastPx, atr: atrUsed, dead: deadZones, biasInfo, eng: engUsed, lockOverrides, labelFixes: labelFixesUsed, modelLabelMismatch } = runChecks(text);
     let finalText = text;
     let retried = false;
 
@@ -827,7 +828,7 @@ export async function POST(req) {
           const r2 = runChecks(t2);
           // pakai hasil ulang hanya jika lebih baik (lebih sedikit pelanggaran)
           if (r2.fixes.length < fixes.length) {
-            ({ checked, markdown, guard, fixes, last: lastPx, atr: atrUsed, dead: deadZones, biasInfo, eng: engUsed, lockOverrides } = r2);
+            ({ checked, markdown, guard, fixes, last: lastPx, atr: atrUsed, dead: deadZones, biasInfo, eng: engUsed, lockOverrides, labelFixes: labelFixesUsed, modelLabelMismatch } = r2);
             finalText = t2;
           }
         }
@@ -948,7 +949,7 @@ export async function POST(req) {
     let audit = null;
     try {
       const cfg = buildConfig({ balance, risk, riskUsd, zones, zonesOff, capPerDirection, strict, mode: body.mode, modeEffective: wantTwoStage ? '2stage' : 'single', engine: engineGw ? 'gateway' : 'gemini', geminiModel, gwModel, marketSource, pairChoice, connectionId, copyFmt: body.copyFmt });
-      audit = buildAudit({ config: cfg, ctx: mt4ContextUsed, usedModel: used?.model || '', requestedModel: engineGw ? gwModel : geminiModel, bias: biasInfo, decision, orders: { v: ENGINE_ORDERS_VERSION, sig: engUsed ? ordersSignature(engUsed.orders) : null, finalSig: engUsed ? finalTableSignature(markdown) : null, overrides: lockOverrides || 0, aiAvailable: !aiDown } });
+      audit = buildAudit({ config: cfg, ctx: mt4ContextUsed, usedModel: used?.model || '', requestedModel: engineGw ? gwModel : geminiModel, bias: biasInfo, decision, orders: { v: ENGINE_ORDERS_VERSION, sig: engUsed ? ordersSignature(engUsed.orders) : null, finalSig: engUsed ? finalTableSignature(markdown) : null, overrides: lockOverrides || 0, aiAvailable: !aiDown }, labels: { v: ZONE_LABELS_VERSION, zones, zone1Off: zonesOff.includes(1), locked: !!engUsed, fixed: labelFixesUsed || [], modelMismatch: modelLabelMismatch || [], residual: auditZoneLabels(markdown, { zones }) } });
       notices.push(auditLine(audit));
     } catch (e) { console.error('[analyze] audit error:', e); }
     if (notices.length > 2) {

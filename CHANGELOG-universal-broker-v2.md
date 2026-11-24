@@ -135,3 +135,13 @@ Akar masalah (temuan #10.3): snapshot + konfigurasi identik bisa menghasilkan ke
 - `lib/decision.js` + `route.js`: CAMPURAN menambah peringatan "Alignment CAMPURAN (H4 …, H1 …, M15 …): timeframe belum searah; tunggu konfirmasi sebelum entry." Status keputusan TIDAK berubah (hanya peringatan); jalur lama (`alignment:false` tanpa pesan) tetap.
 - Tidak diubah: deteksi BOS/CHoCH, OB/FVG, koordinat zona, rumus risiko, standar R:R, aturan TP. Tidak ada auto-trading.
 - Tes: 315/315 (305 lama + 10 baru).
+
+## Audit #12 — Tahap 2: label zona dari konfigurasi (branch `audit12-tahap2`, BELUM merge/deploy)
+- Temuan: nama/peran zona di Bagian 3 dan 4B ditulis model dan tersebar di tiga tempat (`prompt.js`, `STYLE` di `engineOrders.js`, regex `kindOf` di `consistency.js`). Di riwayat (216 baris nama yang punya config tersimpan) 32 baris di 4 analisis mode 3 zona memakai nama mode 2 zona (Zona 1 "Intraday", Zona 2 "Swing").
+- `lib/zoneLabels.js` (baru, tanpa import): sumber resmi `zoneStyle/zoneRole/zoneRowName/canonicalizeName/kindFromName/auditZoneLabels`. Mode 2 zona: Z1 Intraday, Z2 Swing. Mode 3 zona: Z1 Scalping, Z2 Intraday, Z3 Swing. Zona 1 OFF: label `Dimatikan` + 🚫 (baris tetap tampil, tanpa order, status tidak berubah).
+- `lib/engineOrders.js`: `STYLE` dihapus → memakai `zoneLabels`; `lockToEngine` mengunci nama baris Bagian 3 dan 4B ke label resmi (deskripsi dasar level dari model dipertahankan; "Swing High/Low" bukan gaya zona), mengembalikan `labelFixes`, menambah catatan bila ada nama yang dikoreksi. Hitungan `overrides` (penimpaan angka) tidak terpengaruh label.
+- `lib/consistency.js`: `kindOf` = `kindFromName` dari sumber yang sama (perilaku identik; penyamaan Waktu Berakhir tidak berubah).
+- `app/api/analyze/route.js` + `lib/auditTrail.js`: `audit_meta.labels {v, zones, zone1Off, locked, fixed[], modelMismatch[], residual[]}` (narasi model yang bentrok hanya DICATAT, tidak ditulis ulang). ENGINE_VERSION → `smc-validators/2026-11-24.labels1`.
+- Tidak diubah (hash sama dengan sebelum Tahap 2): `riskCheck.js`, `smc/guard.js`, `finalSync.js`, `smc/engine.js`, `decision.js`, `smc/alignment.js`. Waktu berakhir, jarak zona, masa berlaku, rumus risiko, TP/SL/lot, keputusan: tidak berubah.
+- Efek samping yang disengaja: konsumen nama baris (`riskCheck` aturan Daily Close untuk baris "Swing", `decision` peringatan "Scalping") kini menerima nama yang benar; baris yang dulu salah nama diperlakukan sesuai perannya yang sebenarnya.
+- Tes: 347/347 (315 lama + 32 baru: seluruh kombinasi mode × Zona 1 ON/OFF, koreksi nama salah, angka identik nama salah vs benar, Waktu Berakhir, PDF, audit, kabel route).
