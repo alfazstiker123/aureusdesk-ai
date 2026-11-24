@@ -104,3 +104,8 @@ Penyebab: Audit #10 menambah kolom `id` ke select tabel `mt4_market_snapshots`, 
 
 ### Hotfix #10.2 — Peringatan konfigurasi "Mode" salah (false positive)
 Analisa live 16.53: mesin gateway selalu memaksa alur 2 tahap, sedangkan pilihan UI "mode" tetap `single`, sehingga kotak peringatan menuduh "analisa 2tahap · perangkat ini single". Perbaikan: `configDiff` mengabaikan Mode bila mesin = gateway; audit baru menyimpan `mode` (pilihan UI) dan `modeEffective` (dijalankan server). Beda saldo/Zona 1 tetap terdeteksi. 272/272.
+
+### Hotfix #10.3 — label 4B ikut bias final; hash konfigurasi tanpa digit
+- Analisa live 17.07/17.08 (final BULLISH): nama order di Tabel 4B masih membawa label tulisan model yang melawan bias final (Sell Z2 "Searah Bias - PRIORITAS", Buy Z3 "Counter-Trend"). `syncOrderLabels` (lib/biasFinal.js) menyamakan label 4B dengan bias final; hanya teks label, kolom lain identik (diuji).
+- Digit tombol salin (tampilan) tidak lagi masuk hash konfigurasi dan tidak memicu peringatan.
+- TEMUAN BELUM DIPERBAIKI: snapshot (#666b46fb088f) + konfigurasi identik menghasilkan keputusan berbeda (17.07 TRADE vs 17.08 COUNTERTREND_ONLY) karena TP1 Buy Z3 dan pengisian zona ditulis model (R:R 1:3.90 vs 1:1.94 < standar 1:2). Perlu keputusan desain; lihat laporan. 274/274.

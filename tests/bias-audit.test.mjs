@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { classifyModelBias, decideBias, structureTfOf, syncHeadline, insertBiasBlock, parseBiasBlock } from '../lib/biasFinal.js';
+import { classifyModelBias, decideBias, structureTfOf, syncHeadline, insertBiasBlock, parseBiasBlock, syncOrderLabels } from '../lib/biasFinal.js';
 import { resolveBias } from '../lib/consistency.js';
 import { buildConfig, configHash, buildAudit, snapshotMeta, auditLine, sanitizeAudit, ENGINE_VERSION } from '../lib/auditTrail.js';
 import { configDiff } from '../lib/configDiff.js';
@@ -293,4 +293,37 @@ test('mesin gateway memaksa 2 tahap: "Mode" 2tahap vs single BUKAN perbedaan kon
   assert.ok(!configDiff({ ...saved, mode: '2tahap' }, live).some((x) => x.key === 'mode'));
   // mesin gemini: perbedaan mode tetap dilaporkan
   assert.ok(configDiff({ mode: '2tahap', engine: 'gemini' }, { mode: 'single', engine: 'gemini' }).some((x) => x.key === 'mode'));
+});
+
+// ---- Analisa live 17.07/17.08 (final BULLISH): nama order 4B masih membawa label tulisan model yang melawan bias final
+const T4B = `| Order | Harga Entry | Stop Loss | Take Profit | Jarak SL | Lot Aman | Risiko ($) | R:R | Waktu Berakhir (WIB) |
+|---|---|---|---|---|---|---|---|---|
+| Sell Limit Zona 1 (Scalping Supply Terdekat) (Netral) | Tidak Ada Setup (Tunggu) | - | - | - | - | - | - | - |
+| Sell Limit Zona 2 (Intraday Supply H1/FVG M15) (Searah Bias - PRIORITAS) — ⏳ CANDIDATE (belum boleh dipasang) | 3642.72 | 3662.53 | 3609.20 | 19.81 | 0.01 | $19.81 | 1:1.69 | 24 Nov 2026, 21.07 WIB |
+| Buy Limit Zona 3 (Swing Demand H1-H4) (Counter-Trend) — ✅ VALIDATED ORDER | 3543.56 | 3527.19 | 3607.35 | 16.37 | 0.01 | $16.37 | 1:3.90 | 25 Nov 2026, 05.00 WIB |
+| Buy Limit Zona 2 (Intraday Demand) | Tidak Ada Setup (Tunggu) | - | - | - | - | - | - | - |
+`;
+test('label arah di Tabel 4B mengikuti bias final (Sell = Counter-Trend, Buy = Searah saat final BULLISH); angka & status tidak berubah', () => {
+  const r = syncOrderLabels(`### 4B\n\n${T4B}`, 'BULLISH');
+  const rows = r.markdown.split('\n').filter((l) => /^\| (Sell|Buy) Limit/.test(l));
+  assert.match(rows[1], /Sell Limit Zona 2 \(Intraday Supply H1\/FVG M15\) \(Counter-Trend - Wajib Konfirmasi Ekstra\) — ⏳ CANDIDATE \(belum boleh dipasang\)/);
+  assert.match(rows[2], /Buy Limit Zona 3 \(Swing Demand H1-H4\) \(Searah Bias\) — ✅ VALIDATED ORDER/);
+  assert.doesNotMatch(rows[1], /Searah Bias/);
+  assert.equal(r.changed, 3); // Sell Z1 (Netral)→Counter, Sell Z2, Buy Z3
+  const cellsOf = (l) => l.split('|').slice(2).join('|');
+  const before = T4B.split('\n').filter((l) => /^\| (Sell|Buy) Limit/.test(l));
+  rows.forEach((l, i) => assert.equal(cellsOf(l), cellsOf(before[i]))); // semua kolom selain nama sama persis
+  assert.equal(rows[3], before[3]); // baris tanpa label tidak diberi label
+  assert.equal(syncOrderLabels(r.markdown, 'BULLISH').changed, 0); // idempotent
+  const bear = syncOrderLabels(`### 4B\n\n${T4B}`, 'BEARISH').markdown.split('\n').filter((l) => /^\| (Sell|Buy) Limit/.test(l));
+  assert.match(bear[1], /\(Searah Bias\)/); assert.match(bear[2], /Counter-Trend/);
+  const neu = syncOrderLabels(`### 4B\n\n${T4B}`, 'NETRAL').markdown;
+  assert.match(neu, /Netral - Tunggu Konfirmasi/);
+});
+
+test('hash konfigurasi hanya untuk yang memengaruhi keputusan: digit tombol salin (tampilan) tidak mengubah hash dan tidak diperingatkan', () => {
+  const a = buildConfig({ ...BODY, copyFmt: 'ASLI' }), b = buildConfig({ ...BODY, copyFmt: 'AUTO' });
+  assert.equal(configHash(a), configHash(b)); assert.equal(a.digits, 'ASLI'); assert.equal(b.digits, 'AUTO');
+  assert.deepEqual(configDiff(a, { ...b, balance: 1300 }), []);
+  assert.notEqual(configHash(a), configHash(buildConfig({ ...BODY, zonesOff: [1] })));
 });

@@ -11,7 +11,7 @@ import { applyOrderGuard, parseLastPrice } from '@/lib/zoneCheck';
 import { syncInvalidation, labelConfirmationLevels } from '@/lib/invalidation';
 import { spreadInfo, spreadWarnings } from '@/lib/spreadCheck';
 import { zoneOverlap } from '@/lib/overlap';
-import { decideBias, structureTfOf, syncHeadline, insertBiasBlock } from '@/lib/biasFinal';
+import { decideBias, structureTfOf, syncHeadline, insertBiasBlock, syncOrderLabels } from '@/lib/biasFinal';
 import { buildAudit, buildConfig, auditLine } from '@/lib/auditTrail';
 import { riskTransparency, insertRiskTransparency } from '@/lib/riskTransparency';
 import { buildDecision, insertDecision, insufficientDecision, dataGap } from '@/lib/decision';
@@ -813,6 +813,7 @@ export async function POST(req) {
         if (pairCfg) {
           const fo = finalizeOrders(markdown, { status: decision.status, dir: rb0Dir(biasInfo), maxRiskUsd: riskUsd, dec: pairCfg.dec, candidates: checked?.candidates || [] });
           markdown = fo.markdown;
+          markdown = syncOrderLabels(markdown, biasInfo.final).markdown; // label Searah Bias / Counter-Trend di 4B mengikuti bias final server
         }
         markdown = insertDecision(markdown, decision.text);
         // Transparansi risiko (order ditolak karena batas) + panel Bias 3 lapis; keduanya membaca hasil validator, tidak mengubah angka
