@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { GEMINI_MODEL, GEMINI_FALLBACK_MODELS, buildSystemInstruction, buildUserPrompt, extractBias, zoneStyleAddendum, OHLC_ONLY_SYSTEM } from '@/lib/prompt';
+import { GEMINI_MODEL, GEMINI_FALLBACK_MODELS, buildSystemInstruction, buildUserPrompt, extractBias, zoneStyleAddendum, ZONE1_OFF_SYSTEM, OHLC_ONLY_SYSTEM } from '@/lib/prompt';
 import { PAIRS, PAIR_ID_OK, extractPair, guessPairByPrice, resolvePair, parseATR, zoneRange, zoneRange3, rangeText } from '@/lib/pairs';
 import { gatewayChat, gwConfigured, gwModelOf, looksLikeAnalysis } from '@/lib/gateway';
 import { EXTRACT_SYSTEM, EXTRACT_SCHEMA, normalizeExtract, buildCandidates, formatDataBlock, STAGE2_ADDENDUM } from '@/lib/extract';
@@ -14,7 +14,7 @@ import { getMarketSnapshots, marketContext, mt4SymbolForPair } from '@/lib/mt4Ma
 import { getCloudMarketSnapshots, cloudMarketContext, cloudProxyOf, applyBasis } from '@/lib/cloudMarket';
 import { metalsWeekendClosed, fmtMt4 } from '@/lib/marketTime';
 import { buildSmcReport, buildZoneCandidates, buildZoneCandidates3 } from '@/lib/smc/engine';
-import { enforceSmcZones, syncTargets } from '@/lib/smc/guard';
+import { enforceSmcZones, syncTargets, disableZoneRows } from '@/lib/smc/guard';
 import { normalizeIdNumbers } from '@/lib/numFormat';
 import { fixWeekendExpiry, nextOpenMs } from '@/lib/weekendExpiry';
 
@@ -46,7 +46,7 @@ ATURAN V2 SMC — PRIORITAS SAAT OHLC CLOUD/MT4 TERSEDIA:
 - Order (Bagian 3/4B) hanya boleh di dalam OB/FVG fresh searah dari blok SMC; arah tanpa zona valid = tulis "Tidak ada level valid (tunggu)" dan 4B "Tidak Ada Setup (Tunggu)". Server membatalkan order di luar zona SMC fresh.
 - Jika data OHLC tidak lengkap, stale, atau pair tidak cocok, nyatakan VISUAL ONLY — CONFIDENCE TERBATAS dan jangan klaim konfirmasi OHLC.`;
 
-async function loadMt4Context(pairId, zones = 2) {
+async function loadMt4Context(pairId, zones = 2, opts = {}) {
   if (!pairId || !process.env.SUPABASE_SERVICE_ROLE_KEY) return { text: '', snapshots: [], smc: null, source: 'NONE' };
   try {
     const symbol = mt4SymbolForPair(pairId);
@@ -62,7 +62,7 @@ async function loadMt4Context(pairId, zones = 2) {
     const smc = buildSmcReport(byTf);
     const report = smc?.analyses?.length ? `\n\nRINGKASAN SMC DETERMINISTIK (hasil kalkulasi candle tertutup; bukti, bukan sinyal otomatis):\n${smc.promptBlock}` : '';
     const feed = feedPriceInfo(snapshots);
-    const zcd = zoneCandidateData(smc, profile, feed.price || quotePrice, zones);
+    const zcd = zoneCandidateData(smc, profile, feed.price || quotePrice, zones, opts.zonesOff || []);
     const zc = zcd.text;
     return { text: marketContext(snapshots) + report + feed.line + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, zoneRes: zcd.res, feedPrice: feed.price, quote: feed.quote, snapshots, smc, source: 'MT4_EA', warnings: [] };
   } catch (e) {
@@ -155,14 +155,14 @@ function feedPriceInfo(snapshots) {
   return { price: close, quote: null, line: `\n\nHARGA FEED TERKINI (close candle ${q.timeframe} tertutup terakhir${wib ? `, ±${wib} WIB` : ''}): ${close}. Jika harga di screenshot berbeda >0.15% dari angka ini, screenshot basi: tulis "Harga Terakhir" = harga feed ini dan sebut singkat bahwa screenshot lebih lama.` };
 }
 
-function zoneCandidateData(smc, profile, price, zones = 2) {
+function zoneCandidateData(smc, profile, price, zones = 2, skip = []) {
   try {
     const at = (tf) => smc?.analyses?.find((x) => x.timeframe === tf && x.status === 'OK')?.atr14;
     const h1 = at('H1'), h4 = at('H4'), m15 = at('M15');
     const atr = h1 > 0 && h4 > 0 ? { h1, h4, m15: m15 > 0 ? m15 : undefined, src: 'OHLC' } : null;
     if (zones === 3) {
       const R3 = zoneRange3(profile, price, atr);
-      const c = R3 ? buildZoneCandidates3(smc?.analyses, price, R3, { h1: h1 || R3.atr.h1, m15: R3.atr.m15 }) : null;
+      const c = R3 ? buildZoneCandidates3(smc?.analyses, price, R3, { h1: h1 || R3.atr.h1, m15: R3.atr.m15 }, 0.15, skip) : null;
       return { text: c?.text || '', res: c?.res || null };
     }
     const R = zoneRange(profile, price, atr);
@@ -175,11 +175,11 @@ async function loadMarketContext(pairId, sourceMode = 'cloud', zones = 2, opts =
   // Produksi Headway: pair berproxy (XAUUSD) tidak boleh memakai Binance PAXG; paksa OHLC EA MT4.
   if (process.env.DISABLE_CLOUD_PROXY === '1' && pairId && cloudProxyOf(pairId) && (sourceMode === 'cloud' || sourceMode === 'auto')) sourceMode = 'mt4';
   if (!pairId || sourceMode === 'screenshot') return { text: '', snapshots: [], smc: null, source: 'SCREENSHOT' };
-  if (sourceMode === 'mt4') return loadMt4Context(pairId, zones);
+  if (sourceMode === 'mt4') return loadMt4Context(pairId, zones, opts);
   if (sourceMode === 'auto') {
     const cloud = await loadMarketContext(pairId, 'cloud', zones, opts);
     if (cloud.snapshots?.length) return cloud;
-    const mt4 = await loadMt4Context(pairId, zones);
+    const mt4 = await loadMt4Context(pairId, zones, opts);
     if (mt4.snapshots?.length) return mt4;
     return { ...cloud, error: [cloud.error, mt4.error].filter(Boolean).join(' | ') };
   }
@@ -209,7 +209,7 @@ async function loadMarketContext(pairId, sourceMode = 'cloud', zones = 2, opts =
     const smc = buildSmcReport(byTf, { minFvgAtr: result.proxy === 'FX' ? 0.25 : 0.08 }); // forex: FVG mikro dari last-trade = noise
     const report = smc?.analyses?.length ? `\n\nRINGKASAN SMC DETERMINISTIK DARI CLOUD (candle tertutup; bukan sinyal otomatis):\n${smc.promptBlock}` : '';
     const feed = feedPriceInfo(snapshots);
-    const zcd = zoneCandidateData(smc, profile, feed.price || quotePrice, zones);
+    const zcd = zoneCandidateData(smc, profile, feed.price || quotePrice, zones, opts.zonesOff || []);
     const zc = zcd.text;
     return { text: cloudMarketContext(snapshots, result.warnings, result.provider) + proxyLine + report + feed.line + (zc ? `\n\n${zc}` : ''), zoneCandidates: zc, zoneRes: zcd.res, feedPrice: feed.price, snapshots, smc, source: 'CLOUD', provider: result.provider, warnings: result.warnings, proxyNote, scrub: result.scrub || {} };
   } catch (e) {
@@ -259,7 +259,8 @@ export async function POST(req) {
     const pairChoice = PAIR_ID_OK(body.pair) ? body.pair : 'AUTO';
     const fixedPair = pairChoice === 'AUTO' ? null : PAIRS[pairChoice];
     const strict = body.strict !== false; // Validator Zona & Konflik Order (Pengaturan), default ON
-    const zones = body.zoneStyle === 'three' ? 3 : 2; // Gaya Zona: 2 zona (lama) atau 3 zona (Scalp/Intraday/Swing)
+    const zones = body.zoneStyle === 'three' ? 3 : 2;
+    const zonesOff = zones === 3 && body.skipZone1 === true ? [1] : []; // Zona 1 (Scalping) dimatikan user (hanya mode 3 zona) // Gaya Zona: 2 zona (lama) atau 3 zona (Scalp/Intraday/Swing)
     // Pilihan mesin dari Pengaturan: 'gateway' = model gateway menulis analisa (Gemini hanya membaca gambar bila ada).
     const engineGw = body.engine === 'gateway';
     const wantTwoStage = body.mode === '2stage' || engineGw;
@@ -348,7 +349,7 @@ export async function POST(req) {
     }
     const sane = (px, p) => (px > 0 && (!p?.priceRange || (px >= p.priceRange[0] && px <= p.priceRange[1])) ? px : 0);
     chartPrice = sane(chartPrice, resolvedPair);
-    const marketInitial = resolvedPair ? await loadMarketContext(resolvedPair.id, marketSource, zones, { brokerPrice: chartPrice }) : { text: '', snapshots: [], smc: null, source: 'NONE' };
+    const marketInitial = resolvedPair ? await loadMarketContext(resolvedPair.id, marketSource, zones, { brokerPrice: chartPrice, zonesOff }) : { text: '', snapshots: [], smc: null, source: 'NONE' };
     let mt4ContextUsed = marketInitial;
     if (noShot && !(marketInitial.snapshots?.length)) {
       return NextResponse.json({
@@ -365,7 +366,7 @@ export async function POST(req) {
     });
 
     const basePayload = {
-      systemInstruction: { parts: [{ text: buildSystemInstruction(resolvedPair || fixedPair, strict) + (zones === 3 ? zoneStyleAddendum(resolvedPair || fixedPair) : '') + (marketInitial.snapshots?.length ? SMC_SYSTEM_ADDENDUM : '') + (noShot ? OHLC_ONLY_SYSTEM : '') }] },
+      systemInstruction: { parts: [{ text: buildSystemInstruction(resolvedPair || fixedPair, strict) + (zones === 3 ? zoneStyleAddendum(resolvedPair || fixedPair) + (zonesOff.length ? ZONE1_OFF_SYSTEM : '') : '') + (marketInitial.snapshots?.length ? SMC_SYSTEM_ADDENDUM : '') + (noShot ? OHLC_ONLY_SYSTEM : '') }] },
       contents: [{ role: 'user', parts }],
       generationConfig: withThinking({
         temperature: 0.2,
@@ -407,7 +408,7 @@ export async function POST(req) {
         return NextResponse.json({ error: 'Model gateway belum dikonfigurasi di server (OPENAI_COMPAT_*). Matikan mode 2 tahap untuk memakai Gemini.' }, { status: 400 });
       }
       const pNo = fixedPair;
-      twoSystem = buildSystemInstruction(pNo, strict) + (zones === 3 ? zoneStyleAddendum(pNo) : '') + SMC_SYSTEM_ADDENDUM + OHLC_ONLY_SYSTEM;
+      twoSystem = buildSystemInstruction(pNo, strict) + (zones === 3 ? zoneStyleAddendum(pNo) + (zonesOff.length ? ZONE1_OFF_SYSTEM : '') : '') + SMC_SYSTEM_ADDENDUM + OHLC_ONLY_SYSTEM;
       twoUser = buildUserPrompt({ balance, risk, session, labels, pair: pNo, fundamental: fundamental.text, strict }) +
         weekendMappingBlock(pNo) + `\n\n${marketInitial.text}`;
       const g = await gatewayChat({ model: gwModel, system: twoSystem, user: twoUser, timeoutMs: BUDGET_MS - (Date.now() - t0) - 2_000 });
@@ -468,8 +469,8 @@ export async function POST(req) {
           if (!data) throw new Error('ekstraksi gagal');
           const p2 = fixedPair || resolvedPair || resolvePair(data.pair) || (data.lastPrice ? guessPairByPrice(data.lastPrice) : null);
           const built = buildCandidates(data, p2);
-          const mt4Two = await loadMarketContext((fixedPair || p2)?.id, marketSource, zones, { brokerPrice: Number(data.lastPrice) || chartPrice });
-          twoSystem = buildSystemInstruction(fixedPair || resolvedPair || p2, strict) + (zones === 3 ? zoneStyleAddendum(fixedPair || resolvedPair || p2) : '') + '\n' + STAGE2_ADDENDUM + (mt4Two.snapshots?.length ? SMC_SYSTEM_ADDENDUM : '');
+          const mt4Two = await loadMarketContext((fixedPair || p2)?.id, marketSource, zones, { brokerPrice: Number(data.lastPrice) || chartPrice, zonesOff });
+          twoSystem = buildSystemInstruction(fixedPair || resolvedPair || p2, strict) + (zones === 3 ? zoneStyleAddendum(fixedPair || resolvedPair || p2) + (zonesOff.length ? ZONE1_OFF_SYSTEM : '') : '') + '\n' + STAGE2_ADDENDUM + (mt4Two.snapshots?.length ? SMC_SYSTEM_ADDENDUM : '');
           if (mt4Two.snapshots?.length) mt4ContextUsed = mt4Two;
           twoUser =
             buildUserPrompt({ balance, risk, session, labels, pair: fixedPair || resolvedPair || p2, fundamental: fundamental.text, strict }) +
@@ -590,7 +591,8 @@ export async function POST(req) {
       if (idFix.changed) idNumNote = `🔢 ${idFix.changed} angka berformat Indonesia (56.964,10) diubah ke format standar sebelum validasi (model cadangan mengabaikan format).`;
       const dcFix = fixDailyClose(idFix.markdown, new Date());
       const wkFix = fixWeekendExpiry(dcFix.markdown, new Date(), pairCfg);
-      const rawTxt = wkFix.markdown;
+      const z1Off = disableZoneRows(wkFix.markdown, zonesOff);
+      const rawTxt = z1Off.markdown;
       let txt = rawTxt;
       let smcNotes = [];
       if (pairCfg && smcAnalyses?.length) {
@@ -641,6 +643,7 @@ export async function POST(req) {
       }
       // error yang layak generate ulang: arah entry salah (guard) + arah SL/TP salah (guard Bagian 3, riskCheck 4B)
       const fixes = [...(g.flags?.fix || []), ...(c.fixes || [])];
+      if (z1Off.notes.length) smcNotes = [...smcNotes, ...z1Off.notes];
       if (wkFix.notes.length) smcNotes = [...smcNotes, `🗓️ ${wkFix.notes[0]}`];
       if (dcFix.notes.length) smcNotes = [...smcNotes, `🕓 ${dcFix.notes[0]}${dcFix.notes.length > 1 ? ` (+${dcFix.notes.length - 1} baris)` : ''}.`];
       if (smcNotes.length) g = { ...g, notes: [...smcNotes, ...(g.notes || [])] };
@@ -754,7 +757,7 @@ export async function POST(req) {
       notices.push(`⏱ Screenshot kemungkinan basi: harga screenshot berbeda ${mt4PriceDeltaPct.toFixed(2)}% dari feed terbaru. Ambil screenshot ulang sebelum memasang order.`);
     }
     if (zones === 3 && !strict) notices.push('🧭 Gaya zona: 3 zona (Scalping/Intraday/Swing). ⚠️ Validator Zona MATI: zona/arah order tidak dicek server — aktifkan di Pengaturan agar order di luar OB/FVG dibatalkan.');
-    else notices.push(`🧭 Gaya zona: ${zones === 3 ? '3 zona (Scalping/Intraday/Swing)' : '2 zona (Intraday/Swing) — ubah di Pengaturan → Gaya Zona'}.`);
+    else notices.push(`🧭 Gaya zona: ${zones === 3 ? (zonesOff.length ? '3 zona, Zona 1 (Scalping) MATI → hanya Zona 2 Intraday + Zona 3 Swing' : '3 zona (Scalping/Intraday/Swing)') : '2 zona (Intraday/Swing) — ubah di Pengaturan → Gaya Zona'}.`);
     if (sessionUi && sessionUi !== session) notices.push(`🕒 Sesi dihitung dari jam server WIB (${session}); isian Sesi di UI (${sessionUi}) diabaikan.`);
     if (mt4ContextUsed?.proxyNote) notices.push(mt4ContextUsed.proxyNote);
     { const sc = Object.entries(mt4ContextUsed?.scrub || {}); if (sc.length) notices.push(`🧹 Feed data: candle outlier dibersihkan sebelum SMC/ATR (${sc.map(([k, v]) => `${k}: ${v.dropped ? v.dropped + ' dibuang' : ''}${v.dropped && v.clamped ? ', ' : ''}${v.clamped ? v.clamped + ' wick dipotong' : ''}`).join('; ')}).`); }

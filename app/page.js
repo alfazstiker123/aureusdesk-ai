@@ -43,6 +43,7 @@ const LS = {
   geminiModel: 'aureus_geminimodel',
   marketSource: 'aureus_market_source',
   zoneStyle: 'aureus_zone_style',
+  skipZone1: 'aureus_skip_zone1',
 };
 
 // Format digit tombol salin harga. 'ASLI' = apa adanya dari hasil analisa (bawaan).
@@ -123,6 +124,7 @@ export default function Home() {
   const [geminiModel, setGeminiModel] = useState('');
   const [marketSource, setMarketSource] = useState('cloud');
   const [zoneStyle, setZoneStyle] = useState('two');
+  const [skipZone1, setSkipZone1] = useState(false); // Zona 1 (Scalping) mati; hanya berlaku di mode 3 zona
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -185,6 +187,7 @@ export default function Home() {
       if (localStorage.getItem(LS.strict) === 'off') setStrict(false);
       if (localStorage.getItem(LS.mode) === '2stage') setMode('2stage');
       if (localStorage.getItem(LS.zoneStyle) === 'three') setZoneStyle('three');
+      if (localStorage.getItem(LS.skipZone1) === '1') setSkipZone1(true);
       const ms = localStorage.getItem(LS.marketSource);
       if (ms && ['cloud', 'mt4', 'auto', 'screenshot'].includes(ms)) setMarketSource(ms);
       const gm = localStorage.getItem(LS.gwModel);
@@ -537,7 +540,7 @@ export default function Home() {
           'Content-Type': 'application/json',
           ...(apiKey.trim() ? { 'x-gemini-key': apiKey.trim() } : {}),
         },
-        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict, mode, gwModel, engine, geminiModel, marketSource, zoneStyle }),
+        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict, mode, gwModel, engine, geminiModel, marketSource, zoneStyle, skipZone1: zoneStyle === 'three' && skipZone1 }),
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || 'Gagal menganalisa.');
@@ -1021,6 +1024,11 @@ export default function Home() {
         onTheme={(k) => {
           setTheme(k);
           persist(THEME_KEY, k);
+        }}
+        skipZone1={skipZone1}
+        onSkipZone1={(v) => {
+          setSkipZone1(v);
+          persist(LS.skipZone1, v ? '1' : '');
         }}
         zoneStyle={zoneStyle}
         onZoneStyle={(v) => {

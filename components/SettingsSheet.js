@@ -5,7 +5,7 @@ import { THEMES } from '@/lib/themes';
 import { NAV_MODES } from '@/lib/sections';
 
 // Panel Pengaturan: bottom-sheet di HP, dialog di tablet/desktop. Berisi Tema & API Key.
-export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, engine = 'gemini', onEngine, geminiModel = '', onGeminiModel, onTestGateway, onLoadModels, marketSource = 'cloud', onMarketSource, zoneStyle = 'two', onZoneStyle }) {
+export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, engine = 'gemini', onEngine, geminiModel = '', onGeminiModel, onTestGateway, onLoadModels, marketSource = 'cloud', onMarketSource, zoneStyle = 'two', onZoneStyle, skipZone1 = false, onSkipZone1 }) {
   const [showKey, setShowKey] = useState(false);
   const panelRef = useRef(null);
 
@@ -174,6 +174,25 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
               );
             })}
           </div>
+          {zoneStyle === 'three' && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!skipZone1}
+              onClick={() => onSkipZone1 && onSkipZone1(!skipZone1)}
+              className={`mt-2 flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left transition ${
+                skipZone1 ? 'border-line bg-panel2' : 'border-gold bg-gold/10 ring-1 ring-gold/50'
+              }`}
+            >
+              <span>
+                <span className="block text-xs font-semibold">Zona 1 (Scalping): {skipZone1 ? 'MATI' : 'AKTIF'}</span>
+                <span className="mt-0.5 block text-[10px] leading-snug text-muted">
+                  {skipZone1 ? 'Hanya Zona 2 (Intraday) dan Zona 3 (Swing) yang dianalisis. Baris Zona 1 selalu dikosongkan oleh server.' : 'Matikan agar hanya Zona 2 dan Zona 3 yang muncul.'}
+                </span>
+              </span>
+              <span className={`ml-3 flex-none rounded-full px-2 py-0.5 text-[10px] font-bold ${skipZone1 ? 'bg-down/15 text-down' : 'bg-up/15 text-up'}`}>{skipZone1 ? 'OFF' : 'ON'}</span>
+            </button>
+          )}
         </section>
 
         <section className="mb-5">
