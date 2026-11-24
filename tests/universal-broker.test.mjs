@@ -10,7 +10,7 @@ for (const f of ['mt4Market.js', 'instruments.js', 'brokerSpec.js', 'pairs.js', 
   if (fs.existsSync(`lib/${f}`)) fs.writeFileSync(path.join(d, f), fs.readFileSync(`lib/${f}`, 'utf8').replace(/'@\/lib\/([\w]+)'/g, "'./$1.js'"));
 const imp = (f) => import(pathToFileURL(path.join(d, f)).href);
 const { normalizeSymbol } = await imp('instruments.js');
-const { normalizeSpec, specMult, lotFloorSpec, specPromptBlock } = await imp('brokerSpec.js');
+const { normalizeSpec, specMult, lotFloorSpec, specPromptBlock, stepDecimals } = await imp('brokerSpec.js');
 const { validateMarketPayload, groupByConnection, pickConnection } = await imp('mt4Market.js');
 const { PAIRS, riskMult, PAIR_ID_OK } = await imp('pairs.js');
 const { verifyRiskTables } = await imp('riskCheck.js');
@@ -139,7 +139,7 @@ test('akun IDR / mata uang lain: ada pemberitahuan satuan risiko', () => {
 test('lot step / min / max broker dipatuhi', () => {
   const sp = { lotstep: 0.1, minlot: 0.1, maxlot: 5 };
   assert.equal(lotFloorSpec(0.37, sp), 0.3);
-  assert.equal(lotFloorSpec(0.04, sp), 0.1);
+  assert.equal(lotFloorSpec(0.04, sp), 0); // di bawah minimum -> 0 (bukan dinaikkan)
   assert.equal(lotFloorSpec(9, sp), 5);
   assert.equal(lotFloorSpec(0.037, { lotstep: 0.001, minlot: 0.001, maxlot: 10 }), 0.037);
   assert.equal(lotFloorSpec(0.037, null), 0.03);
@@ -174,4 +174,44 @@ test('EA v3.2: tidak ada default XAU, kirim spesifikasi & koneksi, tetap read-on
     assert.ok(ea.includes(k), k);
   assert.ok(!/\b(OrderSend|OrderClose|OrderModify|OrderDelete)\s*\(/.test(ea));
   assert.ok(!/AccountPassword|Password\s*\(/i.test(ea.replace(/\/\/.*$/gm, '')));
+});
+
+test('P0: anggaran di bawah lot minimum broker -> NO TRADE, bukan dinaikkan ke minLot', () => {
+  assert.equal(lotFloorSpec(0.04, { minlot: 0.1, lotstep: 0.1, maxlot: 50 }), 0);
+  const sp = normalizeSpec(specOf({ minlot: 0.1, lotstep: 0.1, accountCurrency: 'USD' })).spec;
+  // jarak 10 x mult 100 = $1000/lot; anggaran $100 -> 0.1 lot pas; anggaran $40 -> 0.04 lot < min 0.1 -> batal
+  const ok = verifyRiskTables(tbl('Buy Limit Zona 1', '3600.00', '3590.00', '3620.00', '0.10', '$100.00'), 100, PAIRS.XAUUSD, NOW, { capPerDirection: false, spec: sp, last: 3610 });
+  assert.ok(!/Tidak Dipasang/.test(ok.markdown));
+  const no = verifyRiskTables(tbl('Buy Limit Zona 1', '3600.00', '3590.00', '3620.00', '0.10', '$100.00'), 40, PAIRS.XAUUSD, NOW, { capPerDirection: false, spec: sp, last: 3610 });
+  assert.match(no.markdown, /Tidak Dipasang/);
+  assert.ok(no.notes.some((n) => /NO TRADE/.test(n) && /lot minimum broker/.test(n)));
+  // tanpa spesifikasi: 0.01 lot pun melebihi anggaran -> batal juga
+  const ns = verifyRiskTables(tbl('Buy Limit Zona 1', '3600.00', '3590.00', '3620.00', '0.01', '$10.00'), 5, PAIRS.XAUUSD, NOW, { capPerDirection: false, last: 3610 });
+  assert.match(ns.markdown, /Tidak Dipasang/);
+});
+test('P0: satuan tick — tickSize dalam HARGA; satuan salah (points) terdeteksi, spesifikasi tidak dipakai', () => {
+  // benar (MQL4): XAUUSD tickSize 0.01 (harga), point 0.01, tickValue 1 -> mult 100 = contract size 100
+  assert.ok(normalizeSpec(specOf({ accountCurrency: 'USD' }), { usdQuote: true }).valid);
+  // salah: tickSize dikirim 1 'point' -> mult 1 != 100 -> ditolak
+  const bad = normalizeSpec(specOf({ ticksize: 1, accountCurrency: 'USD' }), { usdQuote: true });
+  assert.equal(bad.valid, false); assert.ok(bad.problems.some((p) => /tidak cocok dengan contract size/.test(p)));
+  // ticksize bukan kelipatan point
+  assert.equal(normalizeSpec(specOf({ ticksize: 0.015 }), {}).valid, false);
+  // EURUSD 5 digit & EURUSD tickValue per tick: valid
+  assert.ok(normalizeSpec({ lotsize: 100000, tickvalue: 1, ticksize: 0.00001, digits: 5, point: 0.00001, minlot: 0.01, maxlot: 100, lotstep: 0.01, accountCurrency: 'USD' }, { usdQuote: true }).valid);
+  // payload dengan spek salah satuan -> spec.valid=false di server
+  const p = validateMarketPayload(payload('XAUUSD', 3600, { conn: conn('aaaaaaaa1111', 'H', 'S'), spec: specOf({ ticksize: 1 }) }));
+  assert.equal(p.spec.valid, false);
+});
+test('P1: lot step pecahan 0.25 / 0.125 selalu kelipatan step', () => {
+  assert.equal(stepDecimals(0.25), 2); assert.equal(stepDecimals(0.125), 3); assert.equal(stepDecimals(0.01), 2); assert.equal(stepDecimals(1), 0);
+  const s25 = { minlot: 0.25, lotstep: 0.25, maxlot: 10 };
+  assert.equal(lotFloorSpec(0.74, s25), 0.5);
+  assert.equal(lotFloorSpec(0.75, s25), 0.75);
+  assert.equal(lotFloorSpec(0.24, s25), 0);
+  const s125 = { minlot: 0.125, lotstep: 0.125, maxlot: 10 };
+  assert.equal(lotFloorSpec(0.37, s125), 0.25);
+  assert.equal(lotFloorSpec(0.375, s125), 0.375);
+  assert.equal(lotFloorSpec(50, { minlot: 0.25, lotstep: 0.25, maxlot: 5.1 }), 5);
+  for (const x of [0.26, 0.5, 1.37, 2.99, 4.9]) { const v = lotFloorSpec(x, s25); assert.ok(Math.abs(v / 0.25 - Math.round(v / 0.25)) < 1e-9, String(v)); }
 });

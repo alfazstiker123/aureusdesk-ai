@@ -10,3 +10,8 @@ Migrasi: `supabase/migration-v3-universal-broker.sql` (sudah diterapkan di proje
 - UI: Pengaturan → Koneksi Broker MT4.
 - EA v3.2: default simbol = chart, kirim spek + koneksi, tetap read-only.
 Env baru: tidak wajib (opsional `MT4_SYMBOL_MAP` seperti sebelumnya).
+
+## Revisi audit (P0/P1)
+- P0 lot < minLot: `lotFloorSpec` kini mengembalikan 0 (tidak dinaikkan); order dibatalkan dengan pesan NO TRADE.
+- P0 satuan tick: validasi ticksize kelipatan point + tickValue/tickSize harus cocok contract size (kuotasi USD & akun USD); EA mencetak baris `AureusDesk SPEC` untuk verifikasi manual di Headway. BELUM diverifikasi dengan nilai Headway nyata.
+- P1 lot step pecahan (0.25/0.125) kelipatan step, presisi dari step sebenarnya.

@@ -98,6 +98,16 @@ void ShowStatus()
    if(!ShowStatusOnChart) return;
    string t = "AureusDesk Bridge v3.1 | " + g_sym + " | UTC offset server " + IntegerToString(g_offsetUsed / 3600) + "j (" + g_offsetMode + ")\n";
    bool anyOk = false, anyEnabled = false;
+   // Diagnostik spesifikasi: cocokkan dengan Specification simbol di MT4 (klik kanan Market Watch > Specification)
+   {
+      double dTv = MarketInfo(g_sym, MODE_TICKVALUE), dTs = MarketInfo(g_sym, MODE_TICKSIZE);
+      string implied = (dTs > 0) ? DoubleToString(dTv / dTs, 4) : "n/a";
+      Print("AureusDesk SPEC ", g_sym, " | akun ", AccountCurrency(), " | lotsize=", DoubleToString(MarketInfo(g_sym, MODE_LOTSIZE), 2),
+            " tickvalue=", DoubleToString(dTv, 8), " ticksize=", DoubleToString(dTs, 8), " point=", DoubleToString(MarketInfo(g_sym, MODE_POINT), 8),
+            " digits=", (int)MarketInfo(g_sym, MODE_DIGITS), " minlot=", DoubleToString(MarketInfo(g_sym, MODE_MINLOT), 4),
+            " maxlot=", DoubleToString(MarketInfo(g_sym, MODE_MAXLOT), 2), " lotstep=", DoubleToString(MarketInfo(g_sym, MODE_LOTSTEP), 4),
+            " | nilai per 1.0 harga per lot (tickvalue/ticksize)=", implied);
+   }
    for(int i = 0; i < TF_COUNT; i++)
    {
       if(!Enabled(i)) continue;

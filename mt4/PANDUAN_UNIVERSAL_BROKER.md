@@ -22,3 +22,14 @@ Server menolak simbol yang tidak ada di registry (tidak menebak dari harga). Tam
 - Akun non-USD: angka "$" = nilai dalam mata uang akun.
 - Kompatibilitas Exness/FBS BELUM diuji di broker nyata; baru diuji dengan data simulasi. Uji dulu di akun demo.
 - MT5: fase berikutnya.
+
+## Uji verifikasi spesifikasi (WAJIB sebelum memakai angka lot)
+1. Compile EA (F7), pasang di chart Headway XAUUSD. Buka tab Experts: cari baris `AureusDesk SPEC ...`.
+2. Klik kanan simbol di Market Watch > Specification. Cocokkan: contract size, tick value, tick size, point, lot min/max/step, mata uang akun.
+3. Cek angka "tickvalue/ticksize": untuk akun USD dan kuotasi USD harus sama dengan contract size (XAUUSD 100, EURUSD 100000). Jika tidak sama, server menandai spesifikasi TIDAK VALID dan menampilkan peringatan (angka lot jadi perkiraan).
+4. Pengaturan → Koneksi Broker MT4 → Muat: harus tampil "spek ✓".
+5. Ulangi untuk EURUSD, lalu instrumen lain di akun demo.
+Catatan satuan: dokumentasi MQL4 lama menulis MODE_TICKSIZE "in points", tetapi di terminal nyata nilainya umumnya dalam HARGA (mis. 0.00001, 0.01, indeks 0.5). Server memakai satuan harga dan memverifikasinya terhadap contract size; kalau di Headway ternyata berbeda, kirim baris `AureusDesk SPEC` dari tab Experts agar bisa dikoreksi.
+
+## Lot di bawah minimum broker
+Jika anggaran risiko tidak cukup untuk lot minimum broker, order DIBATALKAN (NO TRADE), tidak dinaikkan ke lot minimum.
