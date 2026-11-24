@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react';
 import CandleSvg, { detectPattern } from '@/components/CandleSvg';
-import { ORDER_STATUS, ORDER_STATUS_KEYS, orderKey, planOf, estimatePnl, buildResult } from '@/lib/orderResults';
+import { ORDER_STATUS, ORDER_STATUS_KEYS, orderKey, planOf, estimatePnl, buildResult, parseInputNum, plausibility } from '@/lib/orderResults';
 
 async function copyText(text) {
   try {
@@ -160,14 +160,15 @@ function OrderResultBox({ row, saved, enabled, onSave }) {
   const [status, setStatus] = useState(saved?.status || '');
   const [exit, setExit] = useState(saved?.exit ?? '');
   const [pnl, setPnl] = useState(saved?.pnl ? Math.abs(saved.pnl) : '');
-  const [at, setAt] = useState(isoToWibInput(saved?.at));
+  const [at, setAt] = useState(isoToWibInput(saved?.at) || nowLocalInput());
   const [note, setNote] = useState(saved?.note || '');
   const [busy, setBusy] = useState(false);
   if (!key) return null;
   const meta = saved ? ORDER_STATUS[saved.status] : null;
   const money = (n) => `${n > 0 ? '+' : n < 0 ? '-' : ''}$${Math.abs(n).toFixed(2)}`;
   const preview = status ? (() => { try { return buildResult({ status, exit, pnl, at, note }, plan); } catch { return null; } })() : null;
-  const est = estimatePnl(plan, Number(exit));
+  const est = estimatePnl(plan, parseInputNum(exit));
+  const warn = preview ? plausibility(plan, { exit: parseInputNum(exit), pnl: preview.pnl }) : null;
 
   const save = async (clear = false) => {
     setBusy(true);
@@ -210,15 +211,15 @@ function OrderResultBox({ row, saved, enabled, onSave }) {
               <label className="space-y-0.5"><span className="text-muted">Harga keluar</span>
                 <input inputMode="decimal" value={exit} onChange={(e) => setExit(e.target.value)} placeholder={status === 'SL' ? row.sl : status === 'TP' ? row.tp : ''} className="input w-full font-mono" /></label>
               <label className="space-y-0.5"><span className="text-muted">P/L ($) {Number.isFinite(est) ? `· est. ${Math.abs(est)}` : ''}</span>
-                <input inputMode="decimal" value={pnl} onChange={(e) => setPnl(e.target.value)} placeholder={Number.isFinite(est) ? String(Math.abs(est)) : 'otomatis dari harga'} className="input w-full font-mono" /></label>
+                <input inputMode="decimal" value={pnl} onChange={(e) => setPnl(e.target.value)} placeholder={Number.isFinite(est) ? String(Math.abs(est)) : 'otomatis'} className="input w-full font-mono" /></label>
             </div>
           )}
           {status && (
-            <div className="grid grid-cols-2 gap-2">
-              <label className="space-y-0.5"><span className="text-muted">Waktu (WIB)</span>
-                <input type="datetime-local" value={at} max={nowLocalInput()} onChange={(e) => setAt(e.target.value)} className="input w-full" /></label>
-              <label className="space-y-0.5"><span className="text-muted">Catatan</span>
-                <input value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} placeholder="mis. sl gap/slip" className="input w-full" /></label>
+            <div className="grid grid-cols-1 gap-2">
+              <label className="block min-w-0 space-y-0.5"><span className="text-muted">Waktu (WIB)</span>
+                <input type="datetime-local" value={at} max={nowLocalInput()} onChange={(e) => setAt(e.target.value)} className="input block w-full min-w-0 max-w-full" /></label>
+              <label className="block min-w-0 space-y-0.5"><span className="text-muted">Catatan</span>
+                <input value={note} maxLength={200} onChange={(e) => setNote(e.target.value)} placeholder="mis. sl gap/slip" className="input block w-full min-w-0" /></label>
             </div>
           )}
           {preview && preview.status !== 'EXPIRED' && preview.status !== 'RUNNING' && (
@@ -228,10 +229,11 @@ function OrderResultBox({ row, saved, enabled, onSave }) {
               {preview.slip != null ? <> · slippage {preview.slip > 0 ? '+' : ''}{preview.slip}</> : null}
             </p>
           )}
+          {warn && <p className="rounded-lg border border-down/40 bg-down/10 p-2 font-semibold text-down">⚠️ {warn}</p>}
           <div className="flex justify-end gap-2">
             {saved && <button type="button" disabled={busy} onClick={() => save(true)} className="btn-ghost px-3 py-1.5 text-[11px] text-down">Hapus</button>}
             <button type="button" onClick={() => setOpen(false)} className="btn-ghost px-3 py-1.5 text-[11px]">Batal</button>
-            <button type="button" disabled={!status || busy} onClick={() => save(false)} className="btn btn-gold px-3 py-1.5 text-[11px] disabled:opacity-50">{busy ? 'Menyimpan…' : 'Simpan'}</button>
+            <button type="button" disabled={!status || busy || !!warn} onClick={() => save(false)} className="btn btn-gold px-3 py-1.5 text-[11px] disabled:opacity-50">{busy ? 'Menyimpan…' : 'Simpan'}</button>
           </div>
         </div>
       )}

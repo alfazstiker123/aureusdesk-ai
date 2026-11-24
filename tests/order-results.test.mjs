@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { orderKey, isOrderKey, planOf, estimatePnl, signedPnl, slippage, rMultiple, buildResult, sanitizeResult, computeOrderStats, ORDER_STATUS } from '../lib/orderResults.js';
+import { orderKey, isOrderKey, planOf, estimatePnl, signedPnl, slippage, rMultiple, buildResult, sanitizeResult, computeOrderStats, parseInputNum, plausibility, ORDER_STATUS } from '../lib/orderResults.js';
 
 // Kartu nyata dari screenshot: Sell Limit Zona 1, entry 3660.02, SL 3663.00, TP 3655.55, lot 0.01, risiko $2.98
 const row = { side: 'SELL', title: 'Sell Limit Zona 1 (Scalping FVG M5) (Searah Bias)', entry: '3660.02', sl: '3663.00', tp: '3655.55', lot: '0.01', slDist: '2.98', risk: '$2.98', rr: '1:1.50' };
@@ -74,4 +74,30 @@ test('integrasi: PATCH order_key terpisah dari evaluasi lama; kolom di daftar & 
   const z = fs.readFileSync(new URL('../components/ZoneCards.js', import.meta.url), 'utf8');
   assert.match(z, /enabled=\{!!analysisId\}/);
   assert.match(z, /Simpan analisa ke Riwayat dulu/);
+});
+
+test('input keyboard HP Indonesia (koma desimal) dibaca benar: 3663,22 -> 3663.22 (bug: dulu 366322)', () => {
+  assert.equal(parseInputNum('3663,22'), 3663.22);
+  assert.equal(parseInputNum('3,2'), 3.2);
+  assert.equal(parseInputNum('3.2'), 3.2);
+  assert.equal(parseInputNum('3,663.22'), 3663.22);
+  assert.equal(parseInputNum('3,663'), 3663);
+  assert.equal(parseInputNum('$3,20'), 3.2);
+  assert.ok(Number.isNaN(parseInputNum('abc')));
+  const plan = planOf(row);
+  const r = buildResult({ status: 'SL', exit: '3663,22', pnl: '3,2' }, plan);
+  assert.equal(r.exit, 3663.22);
+  assert.equal(r.pnl, -3.2);
+  assert.equal(r.r, -1.07);
+  assert.equal(r.slip, 0.22);
+  // tanpa P/L: estimasi dari harga keluar
+  assert.equal(buildResult({ status: 'SL', exit: '3663,22' }, plan).pnl, -3.2);
+});
+test('pengaman kewajaran: harga keluar >3% dari entry atau P/L >20x risiko diberi peringatan', () => {
+  const plan = planOf(row);
+  assert.match(plausibility(plan, { exit: 366322, pnl: -362661 }), /terlalu jauh/);
+  assert.match(plausibility(plan, { exit: 3663.22, pnl: -100 }), /20×/);
+  assert.equal(plausibility(plan, { exit: 3663.22, pnl: -3.2 }), null);
+  const z = fs.readFileSync(new URL('../components/ZoneCards.js', import.meta.url), 'utf8');
+  assert.match(z, /disabled=\{!status \|\| busy \|\| !!warn\}/);
 });
