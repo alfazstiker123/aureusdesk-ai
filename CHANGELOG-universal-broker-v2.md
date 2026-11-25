@@ -162,3 +162,11 @@ Sumber: laporan XAUUSD 24 Nov 22:01 (deploy b01fc28). Hanya TEKS yang diperbaiki
 - Kalimat total risiko di catatan verifikasi: "Total risiko per arah (dihitung ulang dari order aktif)" → "Total risiko per arah (order yang lolos validator, termasuk kandidat yang belum boleh dipasang)". Hanya teks; angka, order, dan keputusan tidak berubah.
 - Tes yang mengunci kalimat lama (risk-notes, invalidation-spread) disesuaikan ke kalimat baru. Total: 377/377.
 - Tetap di daftar berikutnya: level invalidation 3643.50 pada Ringkasan; jam No-Trade Zone di Rencana masih dari teks model.
+
+### Audit #13 — perbaikan kecil: baris total risiko ganda (temuan live 22:32 WIB)
+- Gejala: `- Total BUY: Total risiko per arah (...)` di catatan verifikasi (analisis `9e56242`, Zona 1 OFF).
+- Penyebab: `PREFIX` di `finalSync.js` menelan "Total BUY:" / "**Total BUY:**" sebagai label, lalu kalimat pengganti ditempel setelahnya. Sudah ada sebelum Audit #13 (terbukti di `b01fc28` untuk format riskCheck dan tebal); Audit #13 hanya memperluas pola yang dikenali.
+- Perbaikan: bila label yang ditelan mengandung kata "total", awalan diganti awalan bullet saja. Satu pernyataan di `lib/finalSync.js`.
+- Tidak berubah: angka, kalkulasi risiko, order, keputusan, bias, validator, SMC.
+- Tes: +6 (5 format baris total + idempotensi). Total 383/383. Tanpa perbaikan, 3 tes baru gagal.
+- Di luar pekerjaan ini: Rencana vs TRADE (masuk Tahap 4); label pada baris tanpa setup (dicatat, evaluasi lanjutan).
