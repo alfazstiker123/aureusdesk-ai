@@ -93,8 +93,7 @@ for (const [pid, [dec]] of Object.entries(P)) {
     const tag = run(pid, { gapAbs: 55 * t, spec: null });
     assert.match(tag, FB);
     assert.doesNotMatch(tag, /= \d+ tick/);
-    assert.match(run(pid, { gapAbs: 0, spec: null }), /menyentuh tepi zona/);
-    assert.match(run(pid, { gapAbs: 0.4 * t, spec: null }), /menyentuh tepi zona/); // dalam presisi harga (estimasi)
+    assert.match(run(pid, { gapAbs: 0, spec: null }), /menyentuh tepi zona/); // berimpit numerik persis
   });
 }
 // --- irisan tidak terpengaruh spesifikasi
@@ -132,3 +131,37 @@ test('jarak bukan kelipatan tick (batas zona di luar grid): ditampilkan pecahan 
   assert.match(run('USDJPY', { ticksize: 0.01, gapAbs: 0.055, spec: V(0.01) }), /terpisah 0\.055 = 5\.5 tick @0\.01 dari zona/);
   assert.match(run('XAUUSD', { ticksize: 0.05, gapAbs: 0.55, spec: V(0.05) }), /= 11 tick @0\.05/);
 });
+
+// --- koreksi validator: fallback TIDAK boleh menyimpulkan sentuhan dari presisi harga
+for (const [pid, [dec]] of Object.entries(P)) {
+  const t = 10 ** -dec;
+  for (const f of [0.1, 0.4, 0.6, 1, 3]) {
+    test(`fallback ${pid} (presisi ${dec}): gap positif ${f}x presisi TIDAK diklaim menyentuh tepi; jarak absolut tetap`, () => {
+      const g = r5(f * t);
+      for (const spec of [null, { ticksize: 0, valid: true }, { ticksize: 0.01, valid: false }]) {
+        const tag = run(pid, { gapAbs: g, spec });
+        assert.match(tag, FB);
+        assert.doesNotMatch(tag, /menyentuh/);
+        assert.doesNotMatch(tag, /= [0-9.]+ tick/);
+        assert.match(tag, new RegExp(`terpisah ${g.toFixed(Math.max(dec, String(g).split('.')[1]?.length || 0)).replace('.', '\\.')} dari zona`));
+      }
+    });
+  }
+  test(`fallback ${pid}: gap lebih kecil dari setengah presisi (0.01x, 0.3x) tetap "terpisah", bukan sentuhan`, () => {
+    for (const f of [0.01, 0.3]) assert.doesNotMatch(run(pid, { gapAbs: r5(f * t, 10), spec: null }), /menyentuh/);
+  });
+  test(`fallback ${pid}: gap tepat 0 -> batas berimpit numerik (boleh disebut menyentuh), tanpa klaim tick`, () => {
+    const tag = run(pid, { gapAbs: 0, spec: null });
+    assert.match(tag, /menyentuh tepi zona, tanpa irisan/);
+    assert.doesNotMatch(tag, /tick/);
+  });
+  test(`fallback ${pid}: noise floating-point (1e-12) tidak mengubah klasifikasi berimpit`, () => {
+    assert.match(run(pid, { gapAbs: 1e-12, spec: null }), /menyentuh tepi zona/);
+  });
+  test(`spec valid ${pid}: gap di bawah setengah tick = menyentuh; di atas setengah tick = terpisah (ticksize = 10^-dec dan 5x lebih besar)`, () => {
+    for (const T of [t, r5(5 * t, 10)]) {
+      assert.match(run(pid, { gapAbs: r5(0.4 * T, 10), spec: V(T) }), /menyentuh tepi zona/);
+      assert.match(run(pid, { gapAbs: r5(0.6 * T, 10), spec: V(T) }), /terpisah [0-9.]+ = 0\.6 tick @/);
+    }
+  });
+}
