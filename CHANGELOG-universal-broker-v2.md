@@ -177,3 +177,13 @@ Sumber: laporan XAUUSD 24 Nov 22:01 (deploy b01fc28). Hanya TEKS yang diperbaiki
 - C. Total "satu arah": `TOTAL_LINE_RE` menerima "Total risiko satu arah (SELL)"; label tebal yang ditelan PREFIX juga diperiksa. Bukti: USDCAD 23:29 ($34.93 vs $0).
 - Tidak berubah: angka, risiko, lot, Entry/SL/TP/R:R, keputusan, bias, validator, SMC. decision.js tidak disentuh.
 - Tes: +13 (396/396). Tanpa perbaikan, 9 tes baru gagal.
+
+## Audit #13 — Fix4: label arah di Rincian Hitung Risiko + total risiko tebal tanpa bullet (branch `audit13-fix4-rincian-labels`, dari `1f833e7`, BELUM merge/deploy)
+Lanjutan A/B/C. Hanya TEKS; rumus risiko, lot, SL, TP, validator, keputusan, bias, SMC tidak diubah. Sumber temuan: audit matriks 25 Nov (D1/D2/D5b) dan analisis XAUUSD 25 Nov 11:09 WIB (SELL berlabel "Searah Bias" di Rincian saat bias final BULLISH).
+- Akar masalah 1: baris Rincian ("- Sell Limit Zona 2 (Searah Bias): …") dibentuk `finalizeOrders` dari nama tulisan model; `syncOrderLabels` hanya menyentuh baris tabel 4B dan catatan `> -`, jadi label model yang terbalik bertahan.
+- Perbaikan 1 (`lib/biasFinal.js`): `syncOrderLabels` menambah satu putaran khusus bagian "Rincian Hitung Risiko" (baris bullet "Buy/Sell Limit Zona N (…): …", termasuk "tidak ada order (…)"); label ikut bias final memakai `relabel()` yang sama (gaya zona dalam kurung gabungan dipertahankan). Baris di luar bagian Rincian dan baris tanpa label tidak disentuh.
+- Akar masalah 2: baris total tebal tanpa bullet ("**Total risiko satu arah (SELL):** $x") dianggap judul bagian oleh pemindai `finalizeOrders` (`/^\s*\*\*\S/` tanpa bullet) sehingga dilewati dan angka lama model bertahan.
+- Perbaikan 2 (`lib/finalSync.js`, satu kondisi): baris tebal yang cocok `TOTAL_LINE_RE` dan memuat angka `$` tidak lagi diperlakukan sebagai judul bagian.
+- `syncBiasLabels` (Bagian 3) kurung gabungan: HANYA ditambahkan skenario tes (todo): perilaku sekarang meninggalkan label lama dan menambah label baru ("(Intraday - Searah Bias) (Counter-Trend - …)"). Tidak diperbaiki di cabang ini.
+- Tes: 413 total (396 lama semuanya lulus + 17 baru di `tests/rincian-labels.test.mjs`: 16 lulus, 1 todo). Kontrol negatif: pada kode 1f833e7, 9 dari 16 tes baru yang diharapkan lulus gagal. `tests/helpers/report-doc.mjs` = salinan pembangun laporan sintetis dari output-consistency.
+- Tidak diubah (hash sama dengan main): decision, riskCheck, smc/*, engineOrders, zoneLabels, consistency, summaryPlan, staleStructure, overlap, pairs, brokerSpec, route.js.
