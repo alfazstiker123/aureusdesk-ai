@@ -25,7 +25,7 @@ const PAIRS = [[2, 3500.0, 3510.0, 0.01], [3, 150.0, 150.4, 0.001], [5, 1.0840, 
 // base: M15 FVG selalu beririsan penuh (agar baris tidak di-skip); H1 OB = dasar yang diuji
 for (const [dec, lo, hi, tick] of PAIRS) {
   const base = fz(lo, hi);
-  const run = (ob) => zoneOverlap(mk(dec, lo, hi, 'M15 FVG, H1 OB'), { dec, analyses: [an('M15', { fvgs: [base] }), an('H1', { orderBlocks: ob ? [ob] : [] })] });
+  const run = (ob) => zoneOverlap(mk(dec, lo, hi, 'M15 FVG, H1 OB'), { dec, spec: { ticksize: tick, valid: true }, analyses: [an('M15', { fvgs: [base] }), an('H1', { orderBlocks: ob ? [ob] : [] })] });
   const tag = (r) => row(r).match(/H1 OB( \([^)]*\))?/)?.[1] || '';
 
   test(`dec=${dec}: irisan sebagian -> keterangan persen, bukan sentuh/terpisah`, () => {
@@ -39,10 +39,10 @@ for (const [dec, lo, hi, tick] of PAIRS) {
   for (const n of [1, 3, 8, 55]) {
     test(`dec=${dec}: terpisah ${n} tick (atas dan bawah) -> "terpisah", BUKAN "menyentuh tepi"`, () => {
       const up = tag(run(fz(Number((hi + n * tick).toFixed(dec)), Number((hi + n * tick + 100 * tick).toFixed(dec)))));
-      assert.match(up, new RegExp(`terpisah [0-9.]+ = ${n} tick dari zona, tanpa irisan`));
+      assert.match(up, new RegExp(`terpisah [0-9.]+ = ${n} tick @[0-9.]+ dari zona, tanpa irisan`));
       assert.doesNotMatch(up, /menyentuh/);
       const dn = tag(run(fz(Number((lo - n * tick - 100 * tick).toFixed(dec)), Number((lo - n * tick).toFixed(dec)))));
-      assert.match(dn, new RegExp(`terpisah [0-9.]+ = ${n} tick dari zona`));
+      assert.match(dn, new RegExp(`terpisah [0-9.]+ = ${n} tick @[0-9.]+ dari zona`));
     });
   }
   test(`dec=${dec}: idempoten dan koordinat zona/SL/TP tidak berubah`, () => {
@@ -76,7 +76,7 @@ test('FVG fresh yang tidak masuk 8 entri terakhir (hanya ada di zones) ikut dice
 test('FVG di luar 8 terakhir yang terpisah N tick: jarak dihitung dari daftar lengkap (bukan "menyentuh")', () => {
   const sep = fz(3510.08, 3512, { source: 'FVG' });
   const A = [an('M15', { fvgs: [fz(3500, 3510)] }), an('H1', { fvgs: [fz(3600, 3601)], zones: [sep] })];
-  assert.match(row(zoneOverlap(mk(2, 3500, 3510, 'M15 FVG, H1 FVG'), { dec: 2, analyses: A })), /H1 FVG \(terpisah 0\.08 = 8 tick dari zona/);
+  assert.match(row(zoneOverlap(mk(2, 3500, 3510, 'M15 FVG, H1 FVG'), { dec: 2, spec: { ticksize: 0.01 }, analyses: A })), /H1 FVG \(terpisah 0\.08 = 8 tick @0\.01 dari zona/);
 });
 test('zones ORDER_BLOCK ikut sebagai OB; duplikat dengan orderBlocks tidak digandakan', () => {
   const ob = fz(3503, 3507);
