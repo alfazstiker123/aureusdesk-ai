@@ -179,3 +179,10 @@ Sumber: laporan USDJPY 25 Nov 09:29 WIB (deploy 9e56242, NO TRADE). Hanya TEKS p
 - Tidak diubah (hash sama dengan main): engine SMC, `decision.js`, `riskCheck.js`, `smc/guard.js`, `alignment.js`, `pairs.js`, `brokerSpec.js`, `zoneLabels.js`, `engineOrders.js`, `consistency.js`, `summaryPlan.js`, `finalSync.js`, `biasFinal.js`.
 - Batasan yang diketahui: zona basi lebih lama dari 8 FVG terakhir tidak ada di data tampilan sehingga tidak ditandai (tidak ada penanda salah, hanya penanda yang terlewat). Bukan bagian perbaikan ini.
 - Tes: 403/403 (377 + 26 di `tests/stale-identity.test.mjs`). Kontrol negatif: dengan kode lama 15 dari 26 tes baru gagal. Laporan USDJPY nyata (parser dari lampiran laporan): 0 penanda (sebelumnya 2), idempoten.
+
+### Audit #13 — perbaikan A/B/C dari bukti live 24-25 Nov (branch audit13-fix2-total-label, di atas 6ac8205)
+- A. Total basi lolos di Rincian Hitung Risiko bila baris ikut memuat "tidak ada order" / "WAIT / NO TRADE" (pengecualian baris Rincian). Pengecualian itu kini tidak berlaku untuk baris total. Bukti: XAUUSD 23:21 ($34.53 vs $23.62).
+- B. Label arah-vs-bias di 4B tidak dikenali bila digabung gaya zona dalam satu kurung ("(Swing - Counter-Trend)"). `ORDER_LABEL_RE` kini menerima awalan gaya zona dan mempertahankannya. Bukti: XAUUSD 23:21 (Buy Counter / Sell Searah padahal BULLISH). Bagian 3 (`syncBiasLabels` di consistency.js) tidak diubah.
+- C. Total "satu arah": `TOTAL_LINE_RE` menerima "Total risiko satu arah (SELL)"; label tebal yang ditelan PREFIX juga diperiksa. Bukti: USDCAD 23:29 ($34.93 vs $0).
+- Tidak berubah: angka, risiko, lot, Entry/SL/TP/R:R, keputusan, bias, validator, SMC. decision.js tidak disentuh.
+- Tes: +13 (396/396). Tanpa perbaikan, 9 tes baru gagal.

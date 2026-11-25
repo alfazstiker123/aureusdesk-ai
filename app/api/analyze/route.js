@@ -767,7 +767,7 @@ export async function POST(req) {
         md = lab.markdown;
         const sp = spreadWarnings(md, { quote: mt4ContextUsed?.quote || null, dec: pairCfg.dec });
         md = sp.markdown;
-        const ov = zoneOverlap(md, { analyses: smcAnalyses, dec: pairCfg.dec });
+        const ov = zoneOverlap(md, { analyses: smcAnalyses, dec: pairCfg.dec, spec: mt4ContextUsed?.brokerSpec || null });
         md = ov.markdown;
         smcNotes = [...smcNotes, ...inv.notes, ...lab.notes, ...sp.notes, ...ov.notes];
       }
