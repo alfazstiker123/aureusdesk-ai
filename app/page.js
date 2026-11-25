@@ -1026,6 +1026,14 @@ export default function Home() {
       </main>
 
       <SettingsSheet
+        balance={balance}
+        onBalance={(v) => { setBalance(v); persist(LS.balance, v); }}
+        risk={risk}
+        onRisk={(v) => { setRisk(v); persist(LS.risk, v); }}
+        session={session}
+        onSession={setSession}
+        sessions={SESSIONS}
+        riskUsd={riskUsd}
         connectionId={connectionId}
         connList={connList}
         onLoadConnections={async () => {

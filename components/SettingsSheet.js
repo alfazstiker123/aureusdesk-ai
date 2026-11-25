@@ -5,8 +5,18 @@ import { THEMES } from '@/lib/themes';
 import { NAV_MODES } from '@/lib/sections';
 
 // Panel Pengaturan: bottom-sheet di HP, dialog di tablet/desktop. Berisi Tema & API Key.
-export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, engine = 'gemini', onEngine, geminiModel = '', onGeminiModel, onTestGateway, onLoadModels, marketSource = 'cloud', onMarketSource, zoneStyle = 'two', onZoneStyle, skipZone1 = false, onSkipZone1, connectionId = '', onConnectionId, connList = null, onLoadConnections }) {
+export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, engine = 'gemini', onEngine, geminiModel = '', onGeminiModel, onTestGateway, onLoadModels, marketSource = 'cloud', onMarketSource, zoneStyle = 'two', onZoneStyle, skipZone1 = false, onSkipZone1, connectionId = '', onConnectionId, connList = null, onLoadConnections, balance = '', onBalance, risk = '', onRisk, session = '', onSession, sessions = [], riskUsd = 0 }) {
   const [showKey, setShowKey] = useState(false);
+  const riskNum = Number(risk) || 0;
+  const SRC = { cloud: 'Cloud', mt4: 'MT4 EA', auto: 'Cloud→MT4', screenshot: 'Screenshot' };
+  const chips = [
+    { k: 'Data', v: SRC[marketSource] || marketSource },
+    { k: 'Zona', v: zoneStyle === 'three' ? (skipZone1 ? '3 (Z1 mati)' : '3') : '2' },
+    { k: 'Mode', v: mode === '2stage' ? '2 tahap' : 'Langsung' },
+    { k: 'Risiko', v: `${risk || '-'}%` },
+    { k: 'Validator', v: strict ? 'ON' : 'OFF' },
+    { k: 'AI', v: engine === 'gateway' ? 'Gateway' : 'Gemini' },
+  ];
   const panelRef = useRef(null);
 
   useEffect(() => {
@@ -34,48 +44,61 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
         style={{ boxShadow: 'var(--shadow-card)', paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }}
       >
         <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-line sm:hidden" aria-hidden="true" />
-        <div className="mb-4 flex items-center justify-between">
+        <div className="sticky -top-5 z-10 -mx-5 mb-4 flex items-center justify-between border-b border-line bg-panel px-5 py-3">
           <h2 id="settings-title" className="text-base font-bold">⚙️ Pengaturan</h2>
           <button type="button" onClick={onClose} className="btn-ghost h-9 w-9 !p-0" aria-label="Tutup pengaturan">
             ✕
           </button>
         </div>
-
-        <section className="mb-5">
-          <h3 className="field-label">Tema Tampilan</h3>
-          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Tema tampilan">
-            {THEMES.map((t) => {
-              const on = theme === t.key;
-              return (
-                <button
-                  key={t.key}
-                  type="button"
-                  role="radio"
-                  aria-checked={on}
-                  title={t.hint || t.label}
-                  onClick={() => onTheme(t.key)}
-                  className={`flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-[11px] font-semibold transition ${
-                    on ? 'border-gold bg-gold/10 text-ink ring-1 ring-gold/50' : 'border-line bg-panel2 text-muted hover:border-gold/40'
-                  }`}
-                >
-                  <span className="flex -space-x-1.5">
-                    {t.swatch.map((c, i) => (
-                      <span key={i} className="h-4 w-4 rounded-full border border-black/20" style={{ background: c }} />
-                    ))}
-                  </span>
-                  {t.label}
-                </button>
-              );
-            })}
+        <div className="mb-4 flex flex-wrap gap-1.5" aria-label="Ringkasan setelan aktif">
+          {chips.map((c) => (
+            <span key={c.k} className="rounded-full border border-line bg-panel2 px-2.5 py-1 text-[10px] font-semibold text-muted">{c.k}: <span className="text-ink">{c.v}</span></span>
+          ))}
+        </div>
+        <Group title="Akun & Risiko" icon="💰" defaultOpen>
+        <section className="mb-4 last:mb-0">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="field-label" htmlFor="s-balance">Saldo Akun (USD)</label>
+              <input id="s-balance" type="number" inputMode="decimal" min="0" step="any" className="input" value={balance} onChange={(e) => onBalance?.(e.target.value)} />
+            </div>
+            <div>
+              <label className="field-label" htmlFor="s-risk">Risiko per Trade (%)</label>
+              <input id="s-risk" type="number" inputMode="decimal" min="0.1" max="100" step="0.1" className="input" value={risk} onChange={(e) => onRisk?.(e.target.value)} />
+            </div>
           </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2" role="group" aria-label="Preset risiko">
+            {['0.5', '1', '2'].map((v) => (
+              <button key={v} type="button" onClick={() => onRisk?.(v)}
+                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${String(risk) === v ? 'border-gold bg-gold/10 ring-1 ring-gold/50' : 'border-line bg-panel2 hover:border-gold/40'}`}>
+                {v}%
+              </button>
+            ))}
+            <span className="ml-auto rounded-lg border border-gold/30 bg-gold/5 px-3 py-1.5 text-xs">
+              Maks. risiko <b className="text-gold">${Number(riskUsd || 0).toFixed(2)}</b>
+            </span>
+          </div>
+          {riskNum > 2 && (
+            <p className={`mt-2 text-[11px] leading-snug ${riskNum > 5 ? 'text-down' : 'text-gold'}`} role="status">
+              {riskNum > 5 ? 'Risiko di atas 5% per trade sangat agresif; satu rangkaian loss bisa menggerus akun dengan cepat.' : 'Risiko di atas 2% per trade tergolong agresif. Banyak trader memakai 0,5–1%.'}
+            </p>
+          )}
+          <div className="mt-3">
+            <label className="field-label" htmlFor="s-session">Sesi Trading</label>
+            <select id="s-session" className="input" value={session} onChange={(e) => onSession?.(e.target.value)}>
+              {(sessions || []).map((s) => (<option key={s} value={s}>{s}</option>))}
+            </select>
+          </div>
+          <p className="mt-2 text-[10px] leading-snug text-muted">Pengaturan ini sama dengan kolom di form analisis (satu sumber data); mengubahnya di sini langsung berlaku di sana.</p>
         </section>
-
-        <section className="mb-5">
+        </Group>
+        <Group title="Data & Broker" icon="📡" defaultOpen>
+        <section className="mb-4 last:mb-0">
           <h3 className="field-label">Sumber Data Candle</h3>
           <div className="grid grid-cols-1 gap-2" role="radiogroup" aria-label="Sumber data candle">
             {[
               { k: 'cloud', t: 'Cloud Data (gratis, disarankan)', d: 'OHLC dari feed publik exchange (Kraken/Binance), tanpa kunci & tanpa PC. Saat ini hanya BTCUSD; pair lain otomatis screenshot saja.' },
-              { k: 'mt4', t: 'MT4 EA (PC/VPS)', d: 'Memakai candle broker dari EA MT4 yang berjalan di desktop/VPS.' },
+              { k: 'mt4', t: 'MT4 EA (PC/VPS) · Disarankan', d: 'Memakai candle broker dari EA MT4 yang berjalan di desktop/VPS.' },
               { k: 'auto', t: 'Cloud lalu MT4', d: 'Cloud sebagai utama; mencoba MT4 bila Cloud tidak tersedia.' },
               { k: 'screenshot', t: 'Screenshot saja', d: 'Mode lama V1 tanpa OHLC Cloud/MT4.' },
             ].map((m) => {
@@ -91,40 +114,30 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
           </div>
           <p className="mt-2 text-[10px] leading-snug text-muted">Kunci API data pasar hanya disimpan di server Vercel. Provider Cloud bukan harga broker; cocokkan selisih harga sebelum memakai level.</p>
         </section>
-
-        <section className="mb-5">
-          <h3 className="field-label">Model AI</h3>
-          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Mesin AI">
-            {[
-              { k: 'gemini', t: 'Gemini', d: 'Model Gemini (bisa baca gambar).' },
-              { k: 'gateway', t: 'Model saya (gateway)', d: 'Model gateway menulis analisa & chat. Bila ada screenshot, Gemini hanya membaca gambar dulu.' },
-            ].map((m) => {
-              const on = engine === m.k;
-              return (
-                <button key={m.k} type="button" role="radio" aria-checked={on} onClick={() => onEngine?.(m.k)}
-                  className={`rounded-xl border px-3 py-2.5 text-left transition ${on ? 'border-gold bg-gold/10 ring-1 ring-gold/50' : 'border-line bg-panel2 hover:border-gold/40'}`}>
-                  <span className="block text-sm font-semibold">{m.t}</span>
-                  <span className="mt-0.5 block text-[11px] leading-snug text-muted">{m.d}</span>
-                </button>
-              );
-            })}
+        <section className="mb-4 last:mb-0">
+          <h3 className="field-label">Koneksi Broker MT4</h3>
+          <p className="mb-2 text-[10px] leading-snug text-muted">Data tiap broker disimpan terpisah (tidak dicampur). Otomatis = koneksi dengan kiriman EA terbaru untuk pair terpilih.</p>
+          <div className="flex gap-2">
+            <select
+              value={connectionId}
+              onChange={(e) => onConnectionId && onConnectionId(e.target.value)}
+              className="min-w-0 flex-1 rounded-xl border border-line bg-panel2 px-3 py-2 text-xs"
+            >
+              <option value="">Otomatis (terbaru)</option>
+              {connectionId && !(connList || []).some((c) => c.connectionId === connectionId) && <option value={connectionId}>{connectionId.slice(0, 8)}… (tersimpan)</option>}
+              {(connList || []).map((c) => (
+                <option key={c.connectionId} value={c.connectionId}>
+                  {(c.broker || 'Broker lama')} {c.server ? `· ${c.server}` : ''} · {c.symbol}{c.spec ? (c.spec.valid ? ' · spek ✓' : ' · spek ⚠') : ' · tanpa spek'}
+                </option>
+              ))}
+            </select>
+            <button type="button" onClick={() => onLoadConnections && onLoadConnections()} className="flex-none rounded-xl border border-line bg-panel2 px-3 py-2 text-xs font-semibold">Muat</button>
           </div>
-          <div className="mt-2">
-            <label className="field-label" htmlFor="gemmodel">Model Gemini (kosong = default)</label>
-            <input id="gemmodel" value={geminiModel} placeholder="gemini-flash-latest" onChange={(e) => onGeminiModel?.(e.target.value.trim())}
-              autoCapitalize="off" autoCorrect="off" spellCheck={false} className="w-full rounded-xl border border-line bg-panel2 px-3 py-2 text-sm" />
-          </div>
-          <div className="mt-2">
-            <label className="field-label" htmlFor="gwmodel">Model gateway (nama bebas)</label>
-            <input id="gwmodel" value={gwModel} onChange={(e) => onGwModel(e.target.value.trim())}
-              autoCapitalize="off" autoCorrect="off" spellCheck={false} className="w-full rounded-xl border border-line bg-panel2 px-3 py-2 text-sm" />
-            <GatewayTest onTest={onTestGateway} />
-            <ModelPicker onLoad={onLoadModels} current={gwModel} onPick={onGwModel} />
-          </div>
-          <p className="mt-2 text-[10px] leading-snug text-muted">Berlaku untuk analisis dan chat. Pembacaan cepat pair/harga dari gambar tetap memakai Gemini Flash-Lite. Model gateway tidak bisa melihat gambar, jadi tanpa screenshot ia bekerja murni dari OHLC MT4. Jika model gagal, analisis menampilkan error (gateway) atau pindah ke model Gemini cadangan.</p>
+          {connList && connList.length === 0 && <p className="mt-1 text-[10px] text-down">Belum ada data EA yang fresh untuk pair ini.</p>}
         </section>
-
-        <section className="mb-5">
+        </Group>
+        <Group title="Analisis" icon="🧠" defaultOpen>
+        <section className="mb-4 last:mb-0">
           <h3 className="field-label">Mode Analisis</h3>
           <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Mode analisis">
             {[
@@ -148,8 +161,7 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
             })}
           </div>
         </section>
-
-        <section className="mb-5">
+        <section className="mb-4 last:mb-0">
           <h3 className="field-label">Gaya Zona</h3>
           <div className="grid grid-cols-1 gap-2" role="radiogroup" aria-label="Gaya zona">
             {[
@@ -194,30 +206,7 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
             </button>
           )}
         </section>
-
-        <section className="mb-5">
-          <h3 className="field-label">Koneksi Broker MT4</h3>
-          <p className="mb-2 text-[10px] leading-snug text-muted">Data tiap broker disimpan terpisah (tidak dicampur). Otomatis = koneksi dengan kiriman EA terbaru untuk pair terpilih.</p>
-          <div className="flex gap-2">
-            <select
-              value={connectionId}
-              onChange={(e) => onConnectionId && onConnectionId(e.target.value)}
-              className="min-w-0 flex-1 rounded-xl border border-line bg-panel2 px-3 py-2 text-xs"
-            >
-              <option value="">Otomatis (terbaru)</option>
-              {connectionId && !(connList || []).some((c) => c.connectionId === connectionId) && <option value={connectionId}>{connectionId.slice(0, 8)}… (tersimpan)</option>}
-              {(connList || []).map((c) => (
-                <option key={c.connectionId} value={c.connectionId}>
-                  {(c.broker || 'Broker lama')} {c.server ? `· ${c.server}` : ''} · {c.symbol}{c.spec ? (c.spec.valid ? ' · spek ✓' : ' · spek ⚠') : ' · tanpa spek'}
-                </option>
-              ))}
-            </select>
-            <button type="button" onClick={() => onLoadConnections && onLoadConnections()} className="flex-none rounded-xl border border-line bg-panel2 px-3 py-2 text-xs font-semibold">Muat</button>
-          </div>
-          {connList && connList.length === 0 && <p className="mt-1 text-[10px] text-down">Belum ada data EA yang fresh untuk pair ini.</p>}
-        </section>
-
-        <section className="mb-5">
+        <section className="mb-4 last:mb-0">
           <h3 className="field-label">Validator Zona &amp; Konflik Order</h3>
           <button
             type="button"
@@ -240,32 +229,40 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
             </span>
           </button>
         </section>
-
-        <section className="mb-5">
-          <h3 className="field-label">Navigasi Cepat Hasil Analisa</h3>
-          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Mode navigasi cepat">
-            {NAV_MODES.map((m) => {
-              const on = navMode === m.key;
+        </Group>
+        <Group title="Model AI & Kunci" icon="🤖">
+        <section className="mb-4 last:mb-0">
+          <h3 className="field-label">Model AI</h3>
+          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Mesin AI">
+            {[
+              { k: 'gemini', t: 'Gemini', d: 'Model Gemini (bisa baca gambar).' },
+              { k: 'gateway', t: 'Model saya (gateway)', d: 'Model gateway menulis analisa & chat. Bila ada screenshot, Gemini hanya membaca gambar dulu.' },
+            ].map((m) => {
+              const on = engine === m.k;
               return (
-                <button
-                  key={m.key}
-                  type="button"
-                  role="radio"
-                  aria-checked={on}
-                  onClick={() => onNavMode(m.key)}
-                  className={`rounded-xl border px-3 py-2.5 text-left transition ${
-                    on ? 'border-gold bg-gold/10 ring-1 ring-gold/50' : 'border-line bg-panel2 hover:border-gold/40'
-                  }`}
-                >
-                  <span className="block text-xs font-semibold">{m.label}</span>
-                  <span className="mt-0.5 block text-[10px] leading-snug text-muted">{m.hint}</span>
+                <button key={m.k} type="button" role="radio" aria-checked={on} onClick={() => onEngine?.(m.k)}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition ${on ? 'border-gold bg-gold/10 ring-1 ring-gold/50' : 'border-line bg-panel2 hover:border-gold/40'}`}>
+                  <span className="block text-sm font-semibold">{m.t}</span>
+                  <span className="mt-0.5 block text-[11px] leading-snug text-muted">{m.d}</span>
                 </button>
               );
             })}
           </div>
+          <div className="mt-2">
+            <label className="field-label" htmlFor="gemmodel">Model Gemini (kosong = default)</label>
+            <input id="gemmodel" value={geminiModel} placeholder="gemini-flash-latest" onChange={(e) => onGeminiModel?.(e.target.value.trim())}
+              autoCapitalize="off" autoCorrect="off" spellCheck={false} className="w-full rounded-xl border border-line bg-panel2 px-3 py-2 text-sm" />
+          </div>
+          <div className="mt-2">
+            <label className="field-label" htmlFor="gwmodel">Model gateway (nama bebas)</label>
+            <input id="gwmodel" value={gwModel} onChange={(e) => onGwModel(e.target.value.trim())}
+              autoCapitalize="off" autoCorrect="off" spellCheck={false} className="w-full rounded-xl border border-line bg-panel2 px-3 py-2 text-sm" />
+            <GatewayTest onTest={onTestGateway} />
+            <ModelPicker onLoad={onLoadModels} current={gwModel} onPick={onGwModel} />
+          </div>
+          <p className="mt-2 text-[10px] leading-snug text-muted">Berlaku untuk analisis dan chat. Pembacaan cepat pair/harga dari gambar tetap memakai Gemini Flash-Lite. Model gateway tidak bisa melihat gambar, jadi tanpa screenshot ia bekerja murni dari OHLC MT4. Jika model gagal, analisis menampilkan error (gateway) atau pindah ke model Gemini cadangan.</p>
         </section>
-
-        <section>
+        <section className="mb-4 last:mb-0">
           <label className="field-label" htmlFor="apikey">
             Gemini API Key (opsional)
           </label>
@@ -288,12 +285,79 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
             Menimpa GEMINI_API_KEY di server. Disimpan hanya di browser ini (localStorage), tidak masuk ke riwayat.
           </p>
         </section>
+        </Group>
+        <Group title="Tampilan & Navigasi" icon="🎨">
+        <section className="mb-4 last:mb-0">
+          <h3 className="field-label">Tema Tampilan</h3>
+          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Tema tampilan">
+            {THEMES.map((t) => {
+              const on = theme === t.key;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  title={t.hint || t.label}
+                  onClick={() => onTheme(t.key)}
+                  className={`flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-[11px] font-semibold transition ${
+                    on ? 'border-gold bg-gold/10 text-ink ring-1 ring-gold/50' : 'border-line bg-panel2 text-muted hover:border-gold/40'
+                  }`}
+                >
+                  <span className="flex -space-x-1.5">
+                    {t.swatch.map((c, i) => (
+                      <span key={i} className="h-4 w-4 rounded-full border border-black/20" style={{ background: c }} />
+                    ))}
+                  </span>
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+        <section className="mb-4 last:mb-0">
+          <h3 className="field-label">Navigasi Cepat Hasil Analisa</h3>
+          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Mode navigasi cepat">
+            {NAV_MODES.map((m) => {
+              const on = navMode === m.key;
+              return (
+                <button
+                  key={m.key}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => onNavMode(m.key)}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition ${
+                    on ? 'border-gold bg-gold/10 ring-1 ring-gold/50' : 'border-line bg-panel2 hover:border-gold/40'
+                  }`}
+                >
+                  <span className="block text-xs font-semibold">{m.label}</span>
+                  <span className="mt-0.5 block text-[10px] leading-snug text-muted">{m.hint}</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+        </Group>
 
-        <button type="button" onClick={onClose} className="btn-gold mt-6 w-full">
+        <button type="button" onClick={onClose} className="btn-gold sticky bottom-0 mt-6 w-full">
           Selesai
         </button>
       </div>
     </div>
+  );
+}
+
+function Group({ title, icon, defaultOpen = false, children }) {
+  return (
+    <details open={defaultOpen} className="group mb-3 rounded-2xl border border-line bg-panel2/40">
+      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-2xl px-4 py-3 text-sm font-bold select-none [&::-webkit-details-marker]:hidden">
+        <span aria-hidden="true">{icon}</span>
+        <span className="flex-1">{title}</span>
+        <span className="text-xs text-muted transition group-open:rotate-180" aria-hidden="true">▾</span>
+      </summary>
+      <div className="px-4 pb-4 pt-1">{children}</div>
+    </details>
   );
 }
 
