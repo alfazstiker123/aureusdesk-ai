@@ -253,3 +253,103 @@ test('kabel: route memanggil syncSummaryPlan & flagStaleStructure setelah syncOr
     }
   });
 }
+
+// ---- Perbaikan A/B/C (temuan live 24-25 Nov): total basi pada baris "tidak ada order", label kurung gabungan, total "satu arah" ----
+{
+  const base = () => fs.readFileSync(new URL('./fixtures/report-xauusd-24nov.md', import.meta.url), 'utf8').replace(/\r/g, '');
+  const run = (line, status = 'COUNTERTREND_ONLY') => {
+    const md = base().replace(/^- Total risiko arah SELL[^\n]*$/m, line);
+    return finalizeOrders(md, { status, dir: 'BUY', maxRiskUsd: 26, dec: 2 }).markdown;
+  };
+  const totals = (md) => md.split('\n').filter((l) => /Total risiko per arah/.test(l) && !/^\s*>/.test(l));
+
+  // A: baris total yang ikut memuat "tidak ada order" tidak boleh lolos
+  const A = {
+    'A1 live XAUUSD 23:21': '- Total risiko arah SELL (Z2 + Z3) = $34.53, masih di bawah batas $26.00. Arah BUY tidak ada order (tidak ada zona valid).',
+    'A2 "WAIT / NO TRADE"': '- Total risiko arah SELL (Z2 + Z3) = $34.53 (aman). Arah BUY: WAIT / NO TRADE.',
+  };
+  for (const [name, line] of Object.entries(A)) {
+    test(`total basi ${name}: diganti total server, angka basi hilang`, () => {
+      const md = run(line);
+      assert.equal(md.includes('$34.53'), false);
+      assert.equal(totals(md).length, 1);
+      assert.match(totals(md)[0], /BUY \$0\.00 \| SELL \$20\.90/);
+    });
+  }
+  test('total basi A: baris "tidak ada order" biasa di Rincian tetap dibiarkan', () => {
+    const md = run(A['A1 live XAUUSD 23:21']);
+    assert.match(md, /Sell Limit Zona 3: tidak ada order|tidak ada order/);
+    assert.ok(md.split('\n').some((l) => /^- .*tidak ada order/.test(l) && !/Total/i.test(l)));
+  });
+
+  // C: "Total risiko satu arah (SELL): $a + $b = $c"
+  const C = {
+    'C1 live USDCAD (SELL)': '- Total risiko satu arah (SELL): $15.68 + $19.25 = $34.93 (batas $26.00, aman).',
+    'C2 (BUY)': '- Total risiko satu arah (BUY): $15.68 + $19.25 = $34.93 (batas $26.00, aman).',
+    'C3 tebal': '- **Total risiko satu arah (SELL):** $15.68 + $19.25 = $34.93',
+  };
+  for (const [name, line] of Object.entries(C)) {
+    test(`total "satu arah" ${name}: diganti satu kalimat server`, () => {
+      const md = run(line, 'NO_TRADE');
+      assert.equal(md.includes('$34.93'), false);
+      assert.equal(totals(md).length, 1);
+      assert.doesNotMatch(totals(md)[0], /satu arah|Total (BUY|SELL)\s*:/i);
+    });
+  }
+  test('A/C: idempoten dan sel tabel tidak berubah', () => {
+    const cellsOf = (m) => m.split('\n').filter((l) => /^\s*\|/.test(l));
+    for (const line of [...Object.values(A), ...Object.values(C)]) {
+      const a = run(line);
+      const b = finalizeOrders(a, { status: 'COUNTERTREND_ONLY', dir: 'BUY', maxRiskUsd: 26, dec: 2 }).markdown;
+      assert.equal(b, a);
+      assert.deepEqual(cellsOf(a), cellsOf(run('- Total risiko arah SELL = $1.00')));
+    }
+  });
+}
+
+{
+  const T = (n1, n2) => [
+    '| Order | Harga Entry | Stop Loss | Take Profit | Jarak SL | Lot Aman | Risiko ($) | R:R | Waktu Berakhir (WIB) |',
+    '|---|---|---|---|---|---|---|---|---|',
+    `| ${n1} | Tidak Ada Setup (Tunggu) | - | - | - | - | - | - | - |`,
+    `| ${n2} | 3611.27 | 3634.89 | 3559.16 | 23.62 | 0.01 | $23.62 | 1:2.21 | 25 Nov 2026, 05.00 WIB |`,
+    '',
+  ].join('\n');
+  const names = (md) => md.split('\n').filter((l) => /^\|\s*(Buy|Sell) Limit/.test(l)).map((l) => l.split('|')[1].trim());
+
+  test('B live XAUUSD 23:21: bias BULLISH → Buy "(Swing - Counter-Trend)" jadi Searah, Sell "(Intraday - Searah Bias)" jadi Counter; gaya zona tetap', () => {
+    const md = T('Buy Limit Zona 3 (Swing - Counter-Trend)', 'Sell Limit Zona 2 (Intraday - Searah Bias)');
+    const r = syncOrderLabels(md, 'BULLISH');
+    assert.deepEqual(names(r.markdown), ['Buy Limit Zona 3 (Swing - Searah Bias)', 'Sell Limit Zona 2 (Intraday - Counter-Trend - Wajib Konfirmasi Ekstra)']);
+    assert.equal(r.changed, 2);
+  });
+  test('B: bias BEARISH membalik; label yang sudah benar tidak berubah (idempoten)', () => {
+    const md = T('Buy Limit Zona 3 (Swing - Counter-Trend - Wajib Konfirmasi Ekstra)', 'Sell Limit Zona 2 (Intraday - Searah Bias)');
+    const r = syncOrderLabels(md, 'BEARISH');
+    assert.equal(r.changed, 0);
+    assert.equal(r.markdown, md);
+    const r2 = syncOrderLabels(md, 'BULLISH');
+    assert.deepEqual(names(r2.markdown), ['Buy Limit Zona 3 (Swing - Searah Bias)', 'Sell Limit Zona 2 (Intraday - Counter-Trend - Wajib Konfirmasi Ekstra)']);
+    assert.equal(syncOrderLabels(r2.markdown, 'BULLISH').changed, 0);
+  });
+  test('B: bias NETRAL → label netral, gaya zona dipertahankan', () => {
+    const r = syncOrderLabels(T('Buy Limit Zona 3 (Swing - Counter-Trend)', 'Sell Limit Zona 2 (Intraday - Searah Bias)'), 'NETRAL');
+    assert.deepEqual(names(r.markdown), ['Buy Limit Zona 3 (Swing - Netral - Tunggu Konfirmasi)', 'Sell Limit Zona 2 (Intraday - Netral - Tunggu Konfirmasi)']);
+  });
+  test('B: format lama (label berdiri sendiri, kurung deskripsi terpisah) berperilaku sama seperti sebelumnya', () => {
+    const r = syncOrderLabels(T('Buy Limit Zona 2 (Intraday FVG H1-H4) (Counter-Trend - Wajib Konfirmasi Ekstra)', 'Sell Limit Zona 2 (Intraday OB M15/M5) (Searah Bias)'), 'BULLISH');
+    assert.deepEqual(names(r.markdown), ['Buy Limit Zona 2 (Intraday FVG H1-H4) (Searah Bias)', 'Sell Limit Zona 2 (Intraday OB M15/M5) (Counter-Trend - Wajib Konfirmasi Ekstra)']);
+  });
+  test('B: baris tanpa label tidak diberi label; angka dan sel lain tidak berubah', () => {
+    const md = T('Buy Limit Zona 2 (Intraday Demand)', 'Sell Limit Zona 3 (Swing - Searah Bias)');
+    const r = syncOrderLabels(md, 'BULLISH');
+    const other = (m) => m.split('\n').map((l) => l.split('|').slice(2).join('|'));
+    assert.deepEqual(other(r.markdown), other(md));
+    assert.equal(names(r.markdown)[0], 'Buy Limit Zona 2 (Intraday Demand)');
+  });
+  test('B: catatan server "> - Buy Limit Zona 3 (Swing - Counter-Trend): …" ikut bias final', () => {
+    const md = '> - Buy Limit Zona 3 (Swing - Counter-Trend): Risiko dikoreksi - -> $16.45 (0.01 x 16.45 x 100)';
+    const r = syncOrderLabels(md, 'BULLISH');
+    assert.match(r.markdown, /^> - Buy Limit Zona 3 \(Swing - Searah Bias\): Risiko dikoreksi/);
+  });
+}

@@ -170,3 +170,10 @@ Sumber: laporan XAUUSD 24 Nov 22:01 (deploy b01fc28). Hanya TEKS yang diperbaiki
 - Tidak berubah: angka, kalkulasi risiko, order, keputusan, bias, validator, SMC.
 - Tes: +6 (5 format baris total + idempotensi). Total 383/383. Tanpa perbaikan, 3 tes baru gagal.
 - Di luar pekerjaan ini: Rencana vs TRADE (masuk Tahap 4); label pada baris tanpa setup (dicatat, evaluasi lanjutan).
+
+### Audit #13 — perbaikan A/B/C dari bukti live 24-25 Nov (branch audit13-fix2-total-label, di atas 6ac8205)
+- A. Total basi lolos di Rincian Hitung Risiko bila baris ikut memuat "tidak ada order" / "WAIT / NO TRADE" (pengecualian baris Rincian). Pengecualian itu kini tidak berlaku untuk baris total. Bukti: XAUUSD 23:21 ($34.53 vs $23.62).
+- B. Label arah-vs-bias di 4B tidak dikenali bila digabung gaya zona dalam satu kurung ("(Swing - Counter-Trend)"). `ORDER_LABEL_RE` kini menerima awalan gaya zona dan mempertahankannya. Bukti: XAUUSD 23:21 (Buy Counter / Sell Searah padahal BULLISH). Bagian 3 (`syncBiasLabels` di consistency.js) tidak diubah.
+- C. Total "satu arah": `TOTAL_LINE_RE` menerima "Total risiko satu arah (SELL)"; label tebal yang ditelan PREFIX juga diperiksa. Bukti: USDCAD 23:29 ($34.93 vs $0).
+- Tidak berubah: angka, risiko, lot, Entry/SL/TP/R:R, keputusan, bias, validator, SMC. decision.js tidak disentuh.
+- Tes: +13 (396/396). Tanpa perbaikan, 9 tes baru gagal.
