@@ -551,3 +551,34 @@ test('UI: hasil analisis menampilkan Lot Mode (header), riwayat memakai markdown
 test('fmtLot: desimal minimal 2, tanpa pembulatan nilai', () => {
   assert.equal(fmtLot(0.1), '0.10'); assert.equal(fmtLot(1), '1.00'); assert.equal(fmtLot(0.125), '0.125'); assert.equal(fmtLot(0.001), '0.001'); assert.equal(fmtLot('x'), '-');
 });
+
+// ───────────── tambahan integrasi: pair lain, arah SELL, total per arah, Rincian ─────────────
+const sellRows = (name, e, sl, tp, d) => row(name, e, sl, tp, d);
+const EXTRA = [
+  { id: 'GBPJPY', price: 200.5, dist: 0.8, dec: 3, spec: specOf({ lotsize: 100000, tickvalue: 0.645, ticksize: 0.001, digits: 3, point: 0.001 }), mult: 645 },
+  { id: 'USDCAD', price: 1.38, dist: 0.004, dec: 5, spec: specOf({ lotsize: 100000, tickvalue: 0.72, ticksize: 0.00001, digits: 5, point: 0.00001 }), mult: 72000 },
+  { id: 'EURUSD', price: 1.1, dist: 0.0025, dec: 5, spec: specOf({ lotsize: 100000, tickvalue: 1, ticksize: 0.00001, digits: 5, point: 0.00001 }), mult: 100000 },
+];
+test('integrasi: SELL multi-pair, total per arah, Rincian Hitung Risiko, min/maks/step per pair', () => {
+  for (const c of EXTRA) {
+    const f = (n) => n.toFixed(c.dec);
+    const mk = (z, off) => row(`Sell Limit Zona ${z} (Intraday)`, f(c.price + off), f(c.price + off + c.dist), f(c.price + off - c.dist * 3), f(c.dist));
+    const md = `**PAIR:** ${c.id}\n\n**4B. Order Baru yang Disarankan**\n\n${HEAD}\n${mk(1, 0)}\n${mk(2, c.dist * 3)}\n\n**Rincian Hitung Risiko**\n- Sell Limit Zona 1: 0.01 lot x ${f(c.dist)} x 1 = $1.00\n- Sell Limit Zona 2: 0.01 lot x ${f(c.dist)} x 1 = $1.00\n`;
+    const one = 0.1 * c.dist * c.mult;
+    const o = (cap, lot, spec = c.spec) => verifyRiskTables(md, cap, PAIRS[c.id], NOW, { last: c.price, zones: 2, spec, requireSpec: true, lotMode: MAN(lot) });
+    const ok = o(one * 2 + 1, 0.1);
+    assert.deepEqual(lotsIn(ok.markdown), [0.1, 0.1], c.id);
+    assert.ok(Math.abs(ok.totals.SELL - one * 2) < 0.02, `${c.id} total`);
+    assert.match(ok.markdown, new RegExp(`Sell Limit Zona 1: 0\\.10 lot x ${f(c.dist).replace('.', '\\.')} x [\\d.]+[^=\\n]*= \\$`), c.id);
+    assert.ok(auditLotConsistency(ok.markdown, 0.1).ok, c.id);
+    // total per arah melewati batas -> zona terjauh ditolak, lot tetap 0.10
+    const tot = o(one * 1.5, 0.1);
+    assert.deepEqual(lotsIn(tot.markdown), [0.1], c.id);
+    assert.ok(tot.totals.SELL <= one * 1.5 + 0.005, c.id);
+    assert.equal(tot.candidates.find((x) => x.zone === 2).lotCode, STATUS.OVER_RISK, c.id);
+    // min/maks/step
+    assert.deepEqual(lotsIn(o(1e9, 0.005).markdown), [], `${c.id} min`);
+    assert.deepEqual(lotsIn(o(1e9, 0.1, { ...c.spec, maxlot: 0.05 }).markdown), [], `${c.id} maks`);
+    assert.deepEqual(lotsIn(o(1e9, 0.07, { ...c.spec, lotstep: 0.05, minlot: 0.05 }).markdown), [], `${c.id} step`);
+  }
+});
