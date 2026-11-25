@@ -18,19 +18,23 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
     { k: 'AI', v: engine === 'gateway' ? 'Gateway' : 'Gemini' },
   ];
   const panelRef = useRef(null);
+  // onClose dari induk berupa fungsi inline (identitas baru tiap render). Jika dijadikan dependensi efek, efek
+  // (termasuk fokus ke panel) berjalan ulang di setiap ketikan dan merebut fokus dari kolom isian.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return undefined;
-    const onKey = (e) => e.key === 'Escape' && onClose();
+    const onKey = (e) => e.key === 'Escape' && onCloseRef.current?.();
     document.addEventListener('keydown', onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden'; // cegah halaman di belakang ikut bergulir
-    panelRef.current?.focus();
+    panelRef.current?.focus(); // hanya saat panel baru dibuka
     return () => {
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = prev;
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
