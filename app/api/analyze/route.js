@@ -19,6 +19,7 @@ import { buildDecision, insertDecision, insufficientDecision, dataGap } from '@/
 import { isNeutralHeadline, syncBiasLabels, syncTfBias, syncLevelLabels, syncSummaryLevels, syncExpiry } from '@/lib/consistency';
 import { getConnectionSnapshots, marketContext, mt4SymbolForPair, snapshotSpreadMinutes } from '@/lib/mt4Market';
 import { specPromptBlock, specNotice, lotFloorSpec, stepDecimals } from '@/lib/brokerSpec';
+import { normalizeLotMode, parseManualLot, makeManualLotFor, buildLotModeBlock, insertLotModeBlock, auditLotConsistency } from '@/lib/lotMode';
 import { getCloudMarketSnapshots, cloudMarketContext, cloudProxyOf, applyBasis } from '@/lib/cloudMarket';
 import { metalsWeekendClosed, fmtMt4 } from '@/lib/marketTime';
 import { buildSmcReport, buildZoneCandidates, buildZoneCandidates3 } from '@/lib/smc/engine';
@@ -333,6 +334,10 @@ export async function POST(req) {
 
     const labels = images.map((img) => img.label || 'Chart');
     const riskUsd = ((Number(balance) || 0) * (Number(risk) || 0)) / 100;
+    // Lot Mode (Pengaturan → Position Sizing): AUTOMATIC bawaan = perilaku lama. MANUAL = lot dari input; tidak valid -> semua kandidat ditolak (bukan ditebak).
+    const lotModeSel = normalizeLotMode(body.lotMode);
+    const manualIn = lotModeSel === 'MANUAL' ? parseManualLot(body.manualLot) : null;
+    const lotCfg = lotModeSel === 'MANUAL' ? { mode: 'MANUAL', lot: manualIn.ok ? manualIn.value : null, reason: manualIn.reason } : { mode: 'AUTOMATIC' };
     let resolvedPair = fixedPair;
     let autoPairNote = '';
     let chartPrice = 0; // harga broker terakhir dari screenshot (untuk kalibrasi proksi PAXG)
@@ -402,7 +407,7 @@ export async function POST(req) {
         if (!pair || !an?.length || !ctx?.zoneRes || !(px > 0)) return null;
         const spec = ctx.brokerSpec || null;
         const RM = riskMult(pair, px, { spec });
-        const lotFor = makeLotFor(RM.mult, spec, lotFloorSpec);
+        const lotFor = lotCfg.mode === 'MANUAL' ? makeManualLotFor(lotCfg.lot) : makeLotFor(RM.mult, spec, lotFloorSpec);
         const atrH1 = an.find((x) => x.timeframe === 'H1' && x.status === 'OK')?.atr14 || 0;
         const eng = buildEngineOrders({ zoneRes: ctx.zoneRes, analyses: an, price: px, atrH1, dec: pair.dec, zones, zonesOff, riskUsd, lotFor });
         eng.mult = RM.mult; eng.lotStr = (x) => x.toFixed(Math.max(2, stepDecimals(spec?.lotstep > 0 ? spec.lotstep : 0.01)));
@@ -729,7 +734,7 @@ export async function POST(req) {
       const last = pairCfg ? parseLastPrice(txt, pairCfg) : null;
       const atr = pairCfg && last ? (marketAtr || parseATR(txt, pairCfg, last)) : null;
       const c = pairCfg
-        ? verifyRiskTables(txt, riskUsd, pairCfg, new Date(), { last, capPerDirection, zones, spec: mt4ContextUsed?.brokerSpec || null, requireSpec: true, specWhy: mt4ContextUsed?.brokerSpec ? null : (mt4ContextUsed?.specWhy || 'sumber data bukan EA MT4 v3.2') })
+        ? verifyRiskTables(txt, riskUsd, pairCfg, new Date(), { last, capPerDirection, zones, spec: mt4ContextUsed?.brokerSpec || null, requireSpec: true, specWhy: mt4ContextUsed?.brokerSpec ? null : (mt4ContextUsed?.specWhy || 'sumber data bukan EA MT4 v3.2'), lotMode: lotCfg })
         : { markdown: txt, notes: [], fixes: [], tablesChecked: 0 };
       let md = c.markdown;
       let g = { notes: [], flags: { cancel: [], shift: [], fix: [] }, skipped: null, atr };
@@ -891,6 +896,15 @@ export async function POST(req) {
           const dt = /KEPUTUSAN SERVER — ([^:*]+):/.exec(decision.text)?.[1]?.trim() || '';
           markdown = insertBiasBlock(markdown, biasInfo, { decisionTitle: dt });
         } catch (e2) { console.error('[analyze] bias/risk block error:', e2); }
+        // Lot Mode: blok status lot (AUTOMATIC/MANUAL) dari tabel final + hasil validator. Hanya membaca; tidak mengubah angka/keputusan.
+        try {
+          const lb = buildLotModeBlock({ markdown, mode: lotCfg.mode, manualLot: lotCfg.lot, manualReason: lotCfg.reason, candidates: checked?.candidates || [], maxRiskUsd: riskUsd, balance: Number(balance) || 0, riskPct: Number(risk) || 0, mult: checked?.mult ?? null, spec: checked?.spec || null, specOk: !!checked?.specOk });
+          markdown = insertLotModeBlock(markdown, lb.text);
+          if (lotCfg.mode === 'MANUAL') {
+            const ac = auditLotConsistency(markdown, lotCfg.lot);
+            if (!ac.ok) consistencyNotes.push(`⚠️ LOT MANUAL tidak konsisten di ${ac.mismatches.length} tempat (${ac.mismatches.slice(0, 3).join('; ')}): jangan pakai angka itu; generate ulang.`);
+          }
+        } catch (e4) { console.error('[analyze] lot mode block error:', e4); }
       } catch (e) {
         console.error('[analyze] decision error:', e);
       }
@@ -959,7 +973,7 @@ export async function POST(req) {
     // Jejak audit: konfigurasi + snapshot per timeframe + model + versi; disalin ke riwayat (tidak berubah saat snapshot baru masuk)
     let audit = null;
     try {
-      const cfg = buildConfig({ balance, risk, riskUsd, zones, zonesOff, capPerDirection, strict, mode: body.mode, modeEffective: wantTwoStage ? '2stage' : 'single', engine: engineGw ? 'gateway' : 'gemini', geminiModel, gwModel, marketSource, pairChoice, connectionId, copyFmt: body.copyFmt });
+      const cfg = buildConfig({ lotMode: lotCfg.mode, manualLot: lotCfg.lot, balance, risk, riskUsd, zones, zonesOff, capPerDirection, strict, mode: body.mode, modeEffective: wantTwoStage ? '2stage' : 'single', engine: engineGw ? 'gateway' : 'gemini', geminiModel, gwModel, marketSource, pairChoice, connectionId, copyFmt: body.copyFmt });
       audit = buildAudit({ config: cfg, ctx: mt4ContextUsed, usedModel: used?.model || '', requestedModel: engineGw ? gwModel : geminiModel, bias: biasInfo, decision, orders: { v: ENGINE_ORDERS_VERSION, sig: engUsed ? ordersSignature(engUsed.orders) : null, finalSig: engUsed ? finalTableSignature(markdown) : null, overrides: lockOverrides || 0, aiAvailable: !aiDown }, labels: { v: ZONE_LABELS_VERSION, zones, zone1Off: zonesOff.includes(1), locked: !!engUsed, fixed: labelFixesUsed || [], modelMismatch: modelLabelMismatch || [], residual: auditZoneLabels(markdown, { zones }) } });
       notices.push(auditLine(audit));
     } catch (e) { console.error('[analyze] audit error:', e); }
@@ -989,6 +1003,7 @@ export async function POST(req) {
       marketDataSource: mt4ContextUsed?.source || 'NONE',
       candles: candlePack(mt4ContextUsed),
       audit,
+      lotMode: { mode: lotCfg.mode, lot: lotCfg.lot ?? null },
       zoneRetry: retried,
       directionErrors: fixes.length,
       orderGuard: { notes: guard.notes.length, cancel: guard.flags.cancel.length, shift: guard.flags.shift.length, skipped: guard.skipped },

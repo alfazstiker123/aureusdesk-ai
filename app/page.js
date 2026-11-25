@@ -13,6 +13,7 @@ import ChatBox from '@/components/ChatBox';
 import { drawZoneMap } from '@/components/ZoneMap';
 import { buildPdf, loadJsPdf } from '@/lib/pdfReport';
 import { segmentSection, parseMeta } from '@/lib/zoneParse';
+import { parseLotMode } from '@/lib/lotMode';
 import { fixInlineTables } from '@/lib/markdownFix';
 import { NAV_KEY, NAV_DEFAULT, NAV_MODES } from '@/lib/sections';
 import { compressImage, makeThumbnail, formatKB } from '@/lib/imageCompress';
@@ -45,6 +46,8 @@ const LS = {
   zoneStyle: 'aureus_zone_style',
   skipZone1: 'aureus_skip_zone1',
   connectionId: 'aureus_mt4_conn',
+  lotMode: 'aureus_lot_mode', // Position Sizing: kosong = AUTOMATIC (bawaan, pengguna lama tidak berubah)
+  manualLot: 'aureus_manual_lot',
 };
 
 // Format digit tombol salin harga. 'ASLI' = apa adanya dari hasil analisa (bawaan).
@@ -114,6 +117,8 @@ export default function Home() {
   const [balance, setBalance] = useState('1000');
   const [risk, setRisk] = useState('2');
   const [session, setSession] = useState('Sesi Asia');
+  const [lotMode, setLotMode] = useState('AUTOMATIC');
+  const [manualLot, setManualLot] = useState('');
   const [pair, setPair] = useState('AUTO');
   const [copyFmt, setCopyFmt] = useState('ASLI');
   const [theme, setTheme] = useState('desk');
@@ -188,6 +193,8 @@ export default function Home() {
       if (th && THEMES.some((t) => t.key === th)) setTheme(th);
       const nm = localStorage.getItem(NAV_KEY);
       if (nm && NAV_MODES.some((m) => m.key === nm)) setNavMode(nm);
+      if (localStorage.getItem(LS.lotMode) === 'MANUAL') setLotMode('MANUAL');
+      { const ml = localStorage.getItem(LS.manualLot); if (ml && /^\d+(?:[.,]\d+)?$/.test(ml)) setManualLot(ml); }
       if (localStorage.getItem(LS.strict) === 'off') setStrict(false);
       if (localStorage.getItem(LS.mode) === '2stage') setMode('2stage');
       if (localStorage.getItem(LS.zoneStyle) === 'three') setZoneStyle('three');
@@ -546,7 +553,7 @@ export default function Home() {
           'Content-Type': 'application/json',
           ...(apiKey.trim() ? { 'x-gemini-key': apiKey.trim() } : {}),
         },
-        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict, mode, gwModel, engine, geminiModel, marketSource, zoneStyle, skipZone1: zoneStyle === 'three' && skipZone1, connectionId: connectionId || undefined, copyFmt }),
+        body: JSON.stringify({ images: compressed, balance: Number(balance), risk: Number(risk), session, pair, strict, mode, gwModel, engine, geminiModel, marketSource, zoneStyle, skipZone1: zoneStyle === 'three' && skipZone1, connectionId: connectionId || undefined, copyFmt, lotMode, ...(lotMode === 'MANUAL' ? { manualLot } : {}) }),
       });
       const data = await safeJson(res);
       if (!res.ok) throw new Error(data.error || 'Gagal menganalisa.');
@@ -950,6 +957,7 @@ export default function Home() {
                   <p className="mt-2 text-xs text-muted">
                     {formatWIB(result.meta?.created_at)} · {result.meta?.session} · Saldo $
                     {Number(result.meta?.balance || 0).toLocaleString('en-US')} · Risiko {result.meta?.risk}%
+                    {(() => { const lm = parseLotMode(result.markdown); return (<> · <span className={`font-semibold ${lm.mode === 'MANUAL' ? 'text-gold' : ''}`}>{lm.mode === 'MANUAL' ? `Lot MANUAL${lm.lot ? ` ${lm.lot}` : ''}` : 'Lot Otomatis'}</span></>); })()}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2 print:hidden">
@@ -993,7 +1001,7 @@ export default function Home() {
                 ))}
               </div>
 
-              <ResultView audit={result.audit || null} configNow={{ balance: Number(balance), risk: Number(risk), zoneMode: zoneStyle === 'three' ? 'tiga' : 'dua', zone1: zoneStyle === 'three' && skipZone1 ? 'OFF' : 'ON', strict, mode: mode === '2stage' ? '2tahap' : 'single', engine, geminiModel: geminiModel || undefined, marketSource, digits: copyFmt }} candles={result.candles} content={result.markdown} priceDecimals={priceDecimals} mode={navMode} pairId={result.meta?.pair} onToast={showToast} orderCtx={{ analysisId: activeId, orderResults: result.orderResults || {}, onSaveOrder: saveOrderResult }} />
+              <ResultView audit={result.audit || null} configNow={{ balance: Number(balance), risk: Number(risk), zoneMode: zoneStyle === 'three' ? 'tiga' : 'dua', zone1: zoneStyle === 'three' && skipZone1 ? 'OFF' : 'ON', strict, mode: mode === '2stage' ? '2tahap' : 'single', engine, geminiModel: geminiModel || undefined, marketSource, digits: copyFmt, lotMode, manualLot: lotMode === 'MANUAL' ? Number(String(manualLot).replace(',', '.')) || null : undefined }} candles={result.candles} content={result.markdown} priceDecimals={priceDecimals} mode={navMode} pairId={result.meta?.pair} onToast={showToast} orderCtx={{ analysisId: activeId, orderResults: result.orderResults || {}, onSaveOrder: saveOrderResult }} />
             </div>
           )}
 
@@ -1034,6 +1042,10 @@ export default function Home() {
         onSession={setSession}
         sessions={SESSIONS}
         riskUsd={riskUsd}
+        lotMode={lotMode}
+        onLotMode={(v) => { const m = v === 'MANUAL' ? 'MANUAL' : 'AUTOMATIC'; setLotMode(m); persist(LS.lotMode, m === 'MANUAL' ? 'MANUAL' : ''); }}
+        manualLot={manualLot}
+        onManualLot={(v) => { setManualLot(v); persist(LS.manualLot, v); }}
         connectionId={connectionId}
         connList={connList}
         onLoadConnections={async () => {

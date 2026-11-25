@@ -5,7 +5,7 @@ import { THEMES } from '@/lib/themes';
 import { NAV_MODES } from '@/lib/sections';
 
 // Panel Pengaturan: bottom-sheet di HP, dialog di tablet/desktop. Berisi Tema & API Key.
-export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, engine = 'gemini', onEngine, geminiModel = '', onGeminiModel, onTestGateway, onLoadModels, marketSource = 'cloud', onMarketSource, zoneStyle = 'two', onZoneStyle, skipZone1 = false, onSkipZone1, connectionId = '', onConnectionId, connList = null, onLoadConnections, balance = '', onBalance, risk = '', onRisk, session = '', onSession, sessions = [], riskUsd = 0 }) {
+export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, onNavMode, apiKey, onApiKey, strict, onStrict, mode, onMode, gwModel, onGwModel, engine = 'gemini', onEngine, geminiModel = '', onGeminiModel, onTestGateway, onLoadModels, marketSource = 'cloud', onMarketSource, zoneStyle = 'two', onZoneStyle, skipZone1 = false, onSkipZone1, connectionId = '', onConnectionId, connList = null, onLoadConnections, balance = '', onBalance, risk = '', onRisk, session = '', onSession, sessions = [], riskUsd = 0, lotMode = 'AUTOMATIC', onLotMode, manualLot = '', onManualLot }) {
   const [showKey, setShowKey] = useState(false);
   const riskNum = Number(risk) || 0;
   const SRC = { cloud: 'Cloud', mt4: 'MT4 EA', auto: 'Cloud→MT4', screenshot: 'Screenshot' };
@@ -14,6 +14,7 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
     { k: 'Zona', v: zoneStyle === 'three' ? (skipZone1 ? '3 (Z1 mati)' : '3') : '2' },
     { k: 'Mode', v: mode === '2stage' ? '2 tahap' : 'Langsung' },
     { k: 'Risiko', v: `${risk || '-'}%` },
+    { k: 'Lot', v: lotMode === 'MANUAL' ? `Manual ${manualLot || '-'}` : 'Otomatis' },
     { k: 'Validator', v: strict ? 'ON' : 'OFF' },
     { k: 'AI', v: engine === 'gateway' ? 'Gateway' : 'Gemini' },
   ];
@@ -94,6 +95,48 @@ export default function SettingsSheet({ open, onClose, theme, onTheme, navMode, 
             </select>
           </div>
           <p className="mt-2 text-[10px] leading-snug text-muted">Pengaturan ini sama dengan kolom di form analisis (satu sumber data); mengubahnya di sini langsung berlaku di sana.</p>
+        </section>
+        </Group>
+        <Group title="Position Sizing" icon="📐" defaultOpen>
+        <section className="mb-4 last:mb-0">
+          <h3 className="field-label">Lot Mode</h3>
+          <div className="grid grid-cols-1 gap-2" role="radiogroup" aria-label="Lot Mode">
+            {[
+              { k: 'AUTOMATIC', t: 'Automatic Lot · Bawaan', d: 'Sistem menghitung lot dari risiko, jarak SL, dan spesifikasi kontrak broker (rumus yang sama seperti sebelumnya).' },
+              { k: 'MANUAL', t: 'Manual Lot', d: 'Anda menentukan ukuran lot. Risiko tetap dihitung dan diperiksa terhadap batas risiko; lot tidak diubah diam-diam.' },
+            ].map((m) => {
+              const on = lotMode === m.k;
+              return (
+                <button key={m.k} type="button" role="radio" aria-checked={on} onClick={() => onLotMode?.(m.k)}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition ${on ? 'border-gold bg-gold/10 ring-1 ring-gold/50' : 'border-line bg-panel2 hover:border-gold/40'}`}>
+                  <span className="block text-sm font-semibold">{m.t}</span>
+                  <span className="mt-0.5 block text-[11px] leading-snug text-muted">{m.d}</span>
+                </button>
+              );
+            })}
+          </div>
+          {lotMode === 'MANUAL' && (
+            <div className="mt-3">
+              <label className="field-label" htmlFor="s-manual-lot">Manual Lot Size</label>
+              <input id="s-manual-lot" type="text" inputMode="decimal" autoComplete="off" placeholder="mis. 0.10" className="input" value={manualLot} onChange={(e) => onManualLot?.(e.target.value)} aria-invalid={manualLot !== '' && !/^\d+(?:[.,]\d+)?$/.test(String(manualLot).trim())} />
+              <div className="mt-2 flex flex-wrap items-center gap-2" role="group" aria-label="Preset lot">
+                {['0.01', '0.02', '0.05', '0.10', '0.20'].map((v) => (
+                  <button key={v} type="button" onClick={() => onManualLot?.(v)}
+                    className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${String(manualLot) === v ? 'border-gold bg-gold/10 ring-1 ring-gold/50' : 'border-line bg-panel2 hover:border-gold/40'}`}>
+                    {v}
+                  </button>
+                ))}
+              </div>
+              {(manualLot === '' || !/^\d+(?:[.,]\d+)?$/.test(String(manualLot).trim()) || !(Number(String(manualLot).replace(',', '.')) > 0)) && (
+                <p className="mt-2 text-[11px] leading-snug text-down" role="status">Isi lot berupa angka lebih dari 0 (contoh 0.01). Tanpa lot yang valid, semua kandidat order ditolak.</p>
+              )}
+              <p className="mt-2 text-[10px] leading-snug text-muted">Lot divalidasi server terhadap lot minimum, maksimum, dan step broker dari EA MT4. Tanpa data spesifikasi broker (mis. sumber Cloud/screenshot), hasilnya <b>RISK CALCULATION UNAVAILABLE</b> dan order tidak dipasang. Lot manual yang membuat risiko melewati batas ditandai <b>OVER RISK</b> dan ditolak, bukan dikurangi.</p>
+            </div>
+          )}
+          <div className="mt-3 rounded-xl border border-line bg-panel2 px-3 py-2 text-xs">
+            Batas risiko (dipakai kedua mode): <b className="text-gold">${Number(riskUsd || 0).toFixed(2)}</b> <span className="text-muted">= Saldo × Risiko % di grup Akun &amp; Risiko</span>
+          </div>
+          <p className="mt-2 text-[10px] leading-snug text-muted">Perubahan Lot Mode berlaku untuk analisis berikutnya; hasil yang sudah ada tidak berubah. Pilihan tersimpan di perangkat ini.</p>
         </section>
         </Group>
         <Group title="Data & Broker" icon="📡" defaultOpen>
