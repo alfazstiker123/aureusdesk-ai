@@ -879,7 +879,7 @@ export async function POST(req) {
           try {
             const sp = syncSummaryPlan(markdown, { status: decision.status, bias: biasInfo.final });
             markdown = sp.markdown; consistencyNotes.push(...sp.notes);
-            const fs2 = flagStaleStructure(markdown, mt4ContextUsed?.smc?.analyses || []);
+            const fs2 = flagStaleStructure(markdown, mt4ContextUsed?.smc?.analyses || [], { tick: Number.isInteger(pairCfg.dec) && pairCfg.dec >= 0 && pairCfg.dec <= 8 ? Number('1e-' + pairCfg.dec) : 0 });
             markdown = fs2.markdown; consistencyNotes.push(...fs2.notes);
           } catch (e3) { console.error('[analyze] consistency step error:', e3); }
         }
