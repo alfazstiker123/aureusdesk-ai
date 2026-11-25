@@ -186,3 +186,13 @@ Sumber: laporan USDJPY 25 Nov 09:29 WIB (deploy 9e56242, NO TRADE). Hanya TEKS p
 - C. Total "satu arah": `TOTAL_LINE_RE` menerima "Total risiko satu arah (SELL)"; label tebal yang ditelan PREFIX juga diperiksa. Bukti: USDCAD 23:29 ($34.93 vs $0).
 - Tidak berubah: angka, risiko, lot, Entry/SL/TP/R:R, keputusan, bias, validator, SMC. decision.js tidak disentuh.
 - Tes: +13 (396/396). Tanpa perbaikan, 9 tes baru gagal.
+
+## Audit #13 — Tahap 3 / 3b / 3c: klasifikasi overlap, daftar FVG lengkap, tick size (branch `audit13-tahap3-overlap`, commit akhir `8e7bd01`, BELUM merge/deploy)
+Hanya anotasi TEKS pada kolom "Dasar:" Bagian 3; Entry/SL/TP/lot/risiko/R:R/keputusan/SMC tidak diubah.
+- Tahap 3 (`lib/overlap.js`): dasar tanpa irisan dibedakan menyentuh tepi vs terpisah jarak positif vs tanpa data fresh (sebelumnya selalu "menyentuh tepi", termasuk jarak 55 tick USDCAD); `freshByLabel` memakai `zones` (daftar fresh penuh) selain `orderBlocks`/`fvgs` (dipotong 8 terakhir).
+- Tahap 3b: jumlah tick dan toleransi setengah tick memakai `brokerSpec.ticksize` yang valid (diteruskan `route.js`: satu argumen `spec`). `10^-dec` adalah presisi harga, bukan tick size.
+- Tahap 3c: tanpa ticksize valid, "menyentuh tepi" hanya bila batas berimpit numerik (noise floating-point 1e-9); gap positif = "terpisah <jarak absolut> dari zona, tanpa irisan; tick size broker belum tersedia, jumlah tick tidak dihitung". Jarak absolut tidak pernah dibulatkan ke 0.
+- Tes: 514 di branch aslinya (396 + 118 baru).
+
+## Audit #13 — cabang integrasi sementara `integrasi-audit13-sementara` (BUKAN untuk merge sebelum persetujuan)
+Basis `9e56242`; S1 `audit13-fix-total-line` (6ac8205), S2 `audit13-fix3-stale-identity` (82fbad0), S3 `audit13-tahap3-overlap` (8e7bd01, sudah memuat 6ac8205 dan 1f833e7). Konflik hanya CHANGELOG (kedua bagian disimpan). Ditambah `tests/integration-audit13.test.mjs` (5 tes lintas perbaikan). Fix4 (`598f317`) tidak termasuk; tersedia di `integrasi-audit13-sementara-plus-fix4`.
