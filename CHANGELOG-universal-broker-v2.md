@@ -196,3 +196,13 @@ Hanya anotasi TEKS pada kolom "Dasar:" Bagian 3; Entry/SL/TP/lot/risiko/R:R/kepu
 
 ## Audit #13 — cabang integrasi sementara `integrasi-audit13-sementara` (BUKAN untuk merge sebelum persetujuan)
 Basis `9e56242`; S1 `audit13-fix-total-line` (6ac8205), S2 `audit13-fix3-stale-identity` (82fbad0), S3 `audit13-tahap3-overlap` (8e7bd01, sudah memuat 6ac8205 dan 1f833e7). Konflik hanya CHANGELOG (kedua bagian disimpan). Ditambah `tests/integration-audit13.test.mjs` (5 tes lintas perbaikan). Fix4 (`598f317`) tidak termasuk; tersedia di `integrasi-audit13-sementara-plus-fix4`.
+
+## Audit #13 — Fix4: label arah di Rincian Hitung Risiko + total risiko tebal tanpa bullet (branch `audit13-fix4-rincian-labels`, dari `1f833e7`, BELUM merge/deploy)
+Lanjutan A/B/C. Hanya TEKS; rumus risiko, lot, SL, TP, validator, keputusan, bias, SMC tidak diubah. Sumber temuan: audit matriks 25 Nov (D1/D2/D5b) dan analisis XAUUSD 25 Nov 11:09 WIB (SELL berlabel "Searah Bias" di Rincian saat bias final BULLISH).
+- Akar masalah 1: baris Rincian ("- Sell Limit Zona 2 (Searah Bias): …") dibentuk `finalizeOrders` dari nama tulisan model; `syncOrderLabels` hanya menyentuh baris tabel 4B dan catatan `> -`, jadi label model yang terbalik bertahan.
+- Perbaikan 1 (`lib/biasFinal.js`): `syncOrderLabels` menambah satu putaran khusus bagian "Rincian Hitung Risiko" (baris bullet "Buy/Sell Limit Zona N (…): …", termasuk "tidak ada order (…)"); label ikut bias final memakai `relabel()` yang sama (gaya zona dalam kurung gabungan dipertahankan). Baris di luar bagian Rincian dan baris tanpa label tidak disentuh.
+- Akar masalah 2: baris total tebal tanpa bullet ("**Total risiko satu arah (SELL):** $x") dianggap judul bagian oleh pemindai `finalizeOrders` (`/^\s*\*\*\S/` tanpa bullet) sehingga dilewati dan angka lama model bertahan.
+- Perbaikan 2 (`lib/finalSync.js`, satu kondisi): baris tebal yang cocok `TOTAL_LINE_RE` dan memuat angka `$` tidak lagi diperlakukan sebagai judul bagian.
+- `syncBiasLabels` (Bagian 3) kurung gabungan: HANYA ditambahkan skenario tes (todo): perilaku sekarang meninggalkan label lama dan menambah label baru ("(Intraday - Searah Bias) (Counter-Trend - …)"). Tidak diperbaiki di cabang ini.
+- Tes: 413 total (396 lama semuanya lulus + 17 baru di `tests/rincian-labels.test.mjs`: 16 lulus, 1 todo). Kontrol negatif: pada kode 1f833e7, 9 dari 16 tes baru yang diharapkan lulus gagal. `tests/helpers/report-doc.mjs` = salinan pembangun laporan sintetis dari output-consistency.
+- Tidak diubah (hash sama dengan main): decision, riskCheck, smc/*, engineOrders, zoneLabels, consistency, summaryPlan, staleStructure, overlap, pairs, brokerSpec, route.js.
