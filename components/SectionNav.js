@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import MarkdownView from '@/components/MarkdownView';
+import FoldedMarkdown from '@/components/FoldedMarkdown';
 import { splitSections, SECTION_META } from '@/lib/sections';
 import { segmentSection } from '@/lib/zoneParse';
 import { fixInlineTables } from '@/lib/markdownFix';
@@ -12,7 +13,7 @@ import { ExecCards, PendingCards } from '@/components/ZoneCards';
 function SectionBody({ body, n, priceDecimals, onGuide, orderCtx }) {
   const segs = useMemo(() => (n === 3 || n === 4 ? segmentSection(fixInlineTables(body || '')) : null), [body, n]);
   if (!segs || !segs.some((x) => x.type === 'exec' || x.type === 'pending')) {
-    return <MarkdownView content={body} priceDecimals={priceDecimals} />;
+    return <FoldedMarkdown content={body} priceDecimals={priceDecimals} />;
   }
   return (
     <>
@@ -33,7 +34,7 @@ function SectionBody({ body, n, priceDecimals, onGuide, orderCtx }) {
           );
         }
         const text = x.type === 'table' ? x.raw : x.text;
-        return text.trim() ? <MarkdownView key={i} content={text} priceDecimals={priceDecimals} /> : null;
+        return text.trim() ? <FoldedMarkdown key={i} content={text} priceDecimals={priceDecimals} /> : null;
       })}
     </>
   );
@@ -94,7 +95,7 @@ export default function SectionNav({ content, priceDecimals, mode = 'jump', onGu
     };
   }, [nums, content, active, open]);
 
-  if (!parts || mode === 'off') return <MarkdownView content={content} priceDecimals={priceDecimals} />;
+  if (!parts || mode === 'off') return <FoldedMarkdown content={content} priceDecimals={priceDecimals} />;
 
   const { intro, sections } = parts;
   const first = sections[0].n;
@@ -143,7 +144,7 @@ export default function SectionNav({ content, priceDecimals, mode = 'jump', onGu
 
   return (
     <div>
-      {intro.trim() && <MarkdownView content={intro} priceDecimals={priceDecimals} />}
+      {intro.trim() && <FoldedMarkdown content={intro} priceDecimals={priceDecimals} />}
 
       <div
         ref={(el) => (refs.current.bar = el)}
