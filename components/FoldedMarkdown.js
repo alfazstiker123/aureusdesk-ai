@@ -143,6 +143,49 @@ function RulesCard({ seg }) {
   );
 }
 
+// Struktur Top-Down: satu kartu, satu baris per timeframe (tren berwarna, level sebagai chip).
+function TfCard({ seg }) {
+  const tone = (t) => { const u = String(t || '').toUpperCase(); return /BULL/.test(u) && !/BEAR/.test(u) ? 'up' : /BEAR/.test(u) && !/BULL/.test(u) ? 'down' : 'flat'; };
+  const cnt = { up: 0, down: 0, flat: 0 };
+  seg.rows.forEach((r) => { cnt[tone(r.trend)] += 1; });
+  return (
+    <div className="my-2 rounded-3xl border border-line bg-panel2/50 p-3 print:hidden">
+      <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-[11px] font-extrabold uppercase tracking-wide text-gold">📈 Struktur top-down</span>
+        <span className="text-[11px] text-muted">{cnt.up ? `▲ ${cnt.up} bullish` : ''}{cnt.up && cnt.down ? ' · ' : ''}{cnt.down ? `▼ ${cnt.down} bearish` : ''}</span>
+      </div>
+      <ul className="space-y-2">
+        {seg.rows.map((r, i) => {
+          const t = tone(r.trend);
+          return (
+            <li key={i} className="rounded-2xl border border-line/80 bg-night/60 p-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="rounded-lg bg-panel2 px-2 py-0.5 font-mono text-xs font-black text-strong">{r.tf}</span>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${t === 'up' ? 'bg-up/15 text-up' : t === 'down' ? 'bg-down/15 text-down' : 'bg-gold/15 text-gold'}`}>{t === 'up' ? '▲ ' : t === 'down' ? '▼ ' : '◆ '}{r.trend}</span>
+              </div>
+              {r.levels.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {r.levels.map((l, k) => (
+                    <span key={k} className="rounded-lg border border-line bg-panel2/70 px-2 py-1 text-[11px] leading-tight">
+                      <span className="font-mono font-bold text-strong">{l.price}</span>
+                      {l.label && <span className="ml-1 text-muted">{l.label}</span>}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {r.note && <p className="mt-1.5 text-[11px] leading-relaxed text-muted">{r.note}</p>}
+            </li>
+          );
+        })}
+      </ul>
+      <details className="mt-2">
+        <summary className="cursor-pointer list-none text-[11px] text-muted hover:text-ink">Lihat tabel asli</summary>
+        <MarkdownView content={seg.raw} />
+      </details>
+    </div>
+  );
+}
+
 export default function FoldedMarkdown({ content, priceDecimals = null }) {
   const segs = useMemo(() => foldMarkdown(content), [content]);
   return (
@@ -152,6 +195,7 @@ export default function FoldedMarkdown({ content, priceDecimals = null }) {
         if (s.type === 'lot') return <LotCard key={i} card={s.card} />;
         if (s.type === 'ringkas') return <RingkasCard key={i} rows={s.rows} />;
         if (s.type === 'rules') return <RulesCard key={i} seg={s} />;
+        if (s.type === 'tftable') return <TfCard key={i} seg={s} />;
         return <MarkdownView key={i} content={s.text} priceDecimals={priceDecimals} />;
       })}
     </>

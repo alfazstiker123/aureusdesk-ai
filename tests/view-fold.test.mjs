@@ -254,3 +254,33 @@ test('Aturan Pasang tanpa baris BUY/SELL tidak diubah (tetap markdown)', () => {
   const r = foldMarkdown('**Aturan Pasang (batas risiko $200.00 per arah):**\n\n- teks lain\n');
   assert.ok(r.every((s) => s.type === 'md'));
 });
+
+const TF = `### 2. Analisa Teknikal Price Action Terbaru
+
+**Struktur Top-Down (OHLC MT4)**
+| Timeframe | Struktur/Trend | Level Kunci | Catatan |
+|---|---|---|---|
+| W1 | BEARISH | 1.02104 (Swing Low utuh W1), 1.17126 (Swing High W1) | Tren makro jangka panjang tertekan |
+| H4 | BULLISH | 1.09320 (OB Bullish H4 fresh, tepi bawah), 1.09926 (Swing High H4) | Struktur menengah mencoba bertahan |
+| M5 | BULLISH | 1.09657 (CHoCH Bullish M5) | Pantulan |
+
+*Hasil Pemindaian Order:* Tidak ada data order.
+`;
+
+test('Struktur Top-Down jadi baris per timeframe dengan level terpisah', () => {
+  const s = foldMarkdown(TF);
+  const t = s.find((x) => x.type === 'tftable');
+  assert.ok(t);
+  assert.deepEqual(t.rows.map((r) => [r.tf, r.trend]), [['W1', 'BEARISH'], ['H4', 'BULLISH'], ['M5', 'BULLISH']]);
+  assert.equal(t.rows[0].levels.length, 2);
+  assert.deepEqual(t.rows[1].levels[0], { price: '1.09320', label: 'OB Bullish H4 fresh, tepi bawah' });
+  assert.ok(t.raw.includes('| W1 | BEARISH |'));
+  const kept = new Set();
+  for (const x of s) for (const l of (x.type === 'md' || x.type === 'fold' ? x.text : x.raw).split('\n')) kept.add(l);
+  assert.deepEqual(TF.split('\n').filter((l) => l.trim() && !kept.has(l)), []);
+});
+
+test('tabel lain bernama berbeda tidak disentuh', () => {
+  const r = foldMarkdown('| Zona | Entry |\n|---|---|\n| A | 1 |\n');
+  assert.ok(r.every((x) => x.type === 'md'));
+});
