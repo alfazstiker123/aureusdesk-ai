@@ -106,12 +106,15 @@ test('tabel multi-timeframe dilipat, baris Alignment tetap tampil', () => {
   assert.ok(shown.includes('Alignment H4/H1/M15: **SELARAS**'));
 });
 
-test('Rincian Hitung Risiko dilipat utuh; Aturan Pasang tetap tampil', () => {
+test('Rincian Hitung Risiko dilipat utuh; Aturan Pasang jadi kartu hasil akhir', () => {
   const f = folds('rincian')[0];
   assert.equal(f.hint, '1 order');
   assert.ok(f.text.includes('0.01 lot x 18.42 x 100') && f.text.includes('= $18.42'));
-  const shown = segs.filter((s) => s.type === 'md').map((s) => s.text).join('\n');
-  assert.ok(shown.includes('Aturan Pasang') && shown.includes('VALIDATED ORDER'));
+  const r = segs.find((s) => s.type === 'rules');
+  assert.ok(r);
+  assert.equal(r.cap, '$400.00');
+  assert.equal(r.results[0].side, 'SELL');
+  assert.ok(r.tips.some((x) => x.includes('VALIDATED ORDER')));
 });
 
 test('Lampiran dilipat sampai akhir, termasuk blok kode; heading di dalam kode tidak memecah', () => {
@@ -127,7 +130,7 @@ test('verifikasi risiko otomatis dilipat', () => {
 
 test('tidak ada baris yang hilang: setiap baris asli muncul di tampil/lipat/kartu', () => {
   const kept = new Set();
-  for (const s of segs) for (const l of (s.type === 'lot' ? s.raw : s.text).split('\n')) kept.add(l);
+  for (const s of segs) for (const l of (s.type === 'md' || s.type === 'fold' ? s.text : s.raw).split('\n')) kept.add(l);
   const lost = MD.split('\n').filter((l) => l.trim() && l.trim() !== '>' && !kept.has(l));
   assert.deepEqual(lost, []);
 });
@@ -176,4 +179,78 @@ test('markdown lama tanpa blok khusus tidak diubah sama sekali', () => {
 test('kosong/null aman', () => {
   assert.deepEqual(foldMarkdown(''), []);
   assert.deepEqual(foldMarkdown(null), []);
+});
+
+// Struktur nyata EURUSD (06.39 WIB): judul dengan titik dua, blok Ringkasan Cepat, Skenario Batal, Manajemen Posisi.
+const REAL = `> **Ringkasan Cepat**
+> - 🎯 Rencana: Pantau reaksi harga pada zona Intraday dan tunggu konfirmasi price action.
+> - 📍 Level kunci: 1.09752 (Resistance H1) | 1.09640 (Support/FVG H1) | 1.09320 (Demand H4)
+> - ⏰ Hindari trading: 16:45 - 17:15 WIB (No-Trade Zone)
+> - ⏳ Masa Berlaku Sinyal: Zona 1 valid hingga 08:38 WIB; Zona 2 valid hingga 12:38 WIB; Zona 3 valid hingga Daily Close.
+
+### 1. Analisa Fundamental
+
+- **Tafsir Fundamental:** teks.
+
+### 4. Rekomendasi Susunan Pending Order
+
+**Rincian Hitung Risiko:**
+- Buy Limit Zona 2 (Intraday): 0.01 lot x 0.00028 × 100000 (tickValue 1 / tickSize 0.00001, USD) = $0.28 (berada di bawah batas maksimal $150.00).
+
+**Aturan Pasang (batas risiko $150.00 per arah; dihitung ulang server dari order yang lolos validator):**
+
+- Kandidat awal sebelum validator (risiko per order, BUKAN total dan bukan order aktif): Buy Z2 $0.28.
+- Dibatalkan validator (tidak dihitung): Sell Z2 (Tidak Ada Target Struktural Valid).
+- Lolos validator (total akhir; batas $150.00 per arah):
+- SELL: tidak ada order valid (WAIT / NO TRADE).
+- BUY: Buy Z2 = $0.28 (di bawah batas $150.00 per arah).
+- ✅ Pasang hanya order berstatus VALIDATED ORDER, dan hanya bila syarat konfirmasi Bagian 3 terpenuhi.
+
+**Skenario Batal (Invalidation Level):**
+- Buy Zona 2: SL 1.09612 = batas risiko posisi.
+
+**Manajemen Posisi:**
+- Pindahkan SL ke Break Even setelah TP1.
+- *Ingat:* Kolom waktu kedaluwarsa mengikuti jam server broker.
+
+_Bukan saran keuangan. Selalu gunakan manajemen risiko._
+`;
+
+test('struktur nyata: Ringkasan Cepat jadi kartu dengan 4 baris', () => {
+  const r = foldMarkdown(REAL).find((s) => s.type === 'ringkas');
+  assert.ok(r);
+  assert.deepEqual(r.rows.map((x) => x.label), ['Rencana', 'Level kunci', 'Hindari trading', 'Masa Berlaku Sinyal']);
+  assert.equal(r.rows[1].icon, '📍');
+});
+
+test('struktur nyata: Rincian (judul bertitik dua), Skenario Batal, Manajemen Posisi dilipat; Aturan Pasang jadi kartu', () => {
+  const s = foldMarkdown(REAL);
+  const k = (x) => s.filter((y) => y.type === 'fold' && y.kind === x);
+  assert.equal(k('rincian').length, 1);
+  assert.equal(k('rincian')[0].hint, '1 order');
+  assert.equal(k('skenario')[0].hint, '1 level');
+  assert.equal(k('manajemen')[0].hint, '2 catatan');
+  assert.ok(k('manajemen')[0].text.includes('Break Even') && k('manajemen')[0].text.includes('Ingat'));
+  const rules = s.find((y) => y.type === 'rules');
+  assert.equal(rules.cap, '$150.00');
+  assert.deepEqual(rules.results.map((x) => x.side), ['SELL', 'BUY']);
+  assert.equal(rules.detail.length, 3); // kandidat, dibatalkan, "Lolos validator (total akhir...)"
+  const shown = s.filter((y) => y.type === 'md').map((y) => y.text).join('\n');
+  assert.ok(shown.includes('_Bukan saran keuangan'), 'penafian tetap tampil');
+});
+
+test('struktur nyata: tidak ada baris yang hilang', () => {
+  const kept = new Set();
+  for (const s of foldMarkdown(REAL)) for (const l of (s.type === 'md' || s.type === 'fold' ? s.text : s.raw).split('\n')) kept.add(l);
+  assert.deepEqual(REAL.split('\n').filter((l) => l.trim() && !kept.has(l)), []);
+});
+
+test('Aturan Pasang dengan peringatan ⛔ tetap tampil (tidak dilipat)', () => {
+  const r = foldMarkdown('**Aturan Pasang (batas risiko $200.00 per arah):**\n\n- SELL: tidak ada order valid.\n- ⛔ OVER RISK: Sell Z2 melewati batas.\n- Dibatalkan validator: x.\n').find((s) => s.type === 'rules');
+  assert.ok(r.tips.some((t) => t.startsWith('⛔')));
+});
+
+test('Aturan Pasang tanpa baris BUY/SELL tidak diubah (tetap markdown)', () => {
+  const r = foldMarkdown('**Aturan Pasang (batas risiko $200.00 per arah):**\n\n- teks lain\n');
+  assert.ok(r.every((s) => s.type === 'md'));
 });

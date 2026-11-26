@@ -220,8 +220,8 @@ a:focus-visible {
 
 /* ---------- Markdown hasil analisa ---------- */
 .md {
-  font-size: 0.925rem;
-  line-height: 1.7;
+  font-size: 0.9rem;
+  line-height: 1.62;
   color: rgb(var(--c-ink));
   word-wrap: break-word;
 }
@@ -245,17 +245,19 @@ a:focus-visible {
   border-bottom: 1px solid rgb(var(--c-line));
 }
 .md h4 { font-size: 0.98rem; color: rgb(var(--c-ink)); }
-.md p { margin: 0.6em 0; }
+.md p { margin: 0.7em 0; }
 .md strong { color: rgb(var(--c-strong)); font-weight: 700; }
 .md em { color: rgb(var(--c-soft)); }
 .md a { color: rgb(var(--c-gold)); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
 .md img { max-width: 100%; height: auto; }
 .md .table-wrap { overscroll-behavior-x: contain; }
 .md ul,
-.md ol { margin: 0.5em 0 0.8em; padding-left: 1.3em; }
+.md ol { margin: 0.6em 0 1em; padding-left: 1.2em; }
 .md ul { list-style: disc; }
 .md ol { list-style: decimal; }
-.md li { margin: 0.25em 0; }
+.md li { margin: 0.5em 0; }
+.md li > p { margin: 0.2em 0; }
+.md ul ul, .md ol ul { margin: 0.35em 0 0.2em; }
 .md li::marker { color: rgb(var(--c-gold)); }
 .md hr { border: 0; border-top: 1px solid rgb(var(--c-line)); margin: 1.5em 0; }
 .md blockquote {

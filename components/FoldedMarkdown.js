@@ -77,6 +77,72 @@ function LotCard({ card }) {
   );
 }
 
+// Ringkasan Cepat: baris ikon + label + isi, ukuran kecil dan lega.
+function RingkasCard({ rows }) {
+  return (
+    <div className="my-2 rounded-2xl border border-gold/30 bg-panel2/60 p-3 print:hidden">
+      <div className="mb-1.5 text-[11px] font-extrabold uppercase tracking-wide text-gold">⚡ Ringkasan cepat</div>
+      <dl className="space-y-2.5">
+        {rows.map((r, i) => {
+          const chips = /^Level kunci/i.test(r.label) ? r.value.split(/\s*\|\s*/).filter(Boolean) : null;
+          const lines = /^Masa Berlaku/i.test(r.label) ? r.value.split(/\s*;\s*/).filter(Boolean) : null;
+          return (
+            <div key={i} className="flex gap-2.5">
+              <span className="mt-0.5 w-5 shrink-0 text-center text-base leading-none" aria-hidden="true">{r.icon}</span>
+              <div className="min-w-0 flex-1">
+                <dt className="text-[11px] font-bold text-muted">{r.label}</dt>
+                <dd className="mt-0.5 text-[13px] leading-relaxed text-ink">
+                  {chips ? (
+                    <span className="flex flex-wrap gap-1.5">
+                      {chips.map((c, k) => <span key={k} className="rounded-lg border border-line bg-night/70 px-2 py-0.5 font-mono text-[11px] text-strong">{c}</span>)}
+                    </span>
+                  ) : lines ? (
+                    <ul className="space-y-0.5">{lines.map((l, k) => <li key={k}>{l.replace(/\.$/, '')}</li>)}</ul>
+                  ) : r.value}
+                </dd>
+              </div>
+            </div>
+          );
+        })}
+      </dl>
+    </div>
+  );
+}
+
+// Aturan Pasang: hanya hasil akhir per arah; kandidat & pembatalan dilipat. Peringatan (⛔/⚠️) tetap tampil.
+function RulesCard({ seg }) {
+  return (
+    <div className="my-2 rounded-2xl border border-line bg-panel2/60 p-3 text-xs sm:text-sm print:hidden">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="font-extrabold text-strong">🛡️ Aturan pasang</span>
+        {seg.cap && <span className="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">batas {seg.cap}/arah</span>}
+      </div>
+      <ul className="mt-2 space-y-1.5">
+        {seg.results.map((r, i) => {
+          const none = /tidak ada order valid/i.test(r.text);
+          return (
+            <li key={i} className="flex items-start gap-2 rounded-xl border border-line bg-night/60 px-2.5 py-2">
+              <span className={`mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-extrabold ${r.side === 'BUY' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>{r.side}</span>
+              <span className={`min-w-0 leading-relaxed ${none ? 'text-muted' : 'font-semibold text-strong'}`}>{r.text.replace(/\.$/, '')}</span>
+            </li>
+          );
+        })}
+      </ul>
+      {seg.tips.map((t, i) => (
+        <p key={i} className={`mt-2 rounded-xl px-2.5 py-1.5 leading-relaxed ${/^(⛔|⚠️)/u.test(t) ? 'border border-down/40 bg-down/10 text-strong' : 'text-soft'}`}>{t}</p>
+      ))}
+      {seg.detail.length > 0 && (
+        <details className="mt-2">
+          <summary className="cursor-pointer list-none text-[11px] text-muted hover:text-ink">ⓘ Kandidat awal & pembatalan validator</summary>
+          <ul className="mt-1 list-disc space-y-1 pl-4 text-[11px] leading-relaxed text-muted">
+            {seg.detail.map((d, i) => <li key={i}>{d}</li>)}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export default function FoldedMarkdown({ content, priceDecimals = null }) {
   const segs = useMemo(() => foldMarkdown(content), [content]);
   return (
@@ -84,6 +150,8 @@ export default function FoldedMarkdown({ content, priceDecimals = null }) {
       {segs.map((s, i) => {
         if (s.type === 'fold') return <Fold key={i} seg={s} priceDecimals={priceDecimals} />;
         if (s.type === 'lot') return <LotCard key={i} card={s.card} />;
+        if (s.type === 'ringkas') return <RingkasCard key={i} rows={s.rows} />;
+        if (s.type === 'rules') return <RulesCard key={i} seg={s} />;
         return <MarkdownView key={i} content={s.text} priceDecimals={priceDecimals} />;
       })}
     </>
